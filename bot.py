@@ -231,20 +231,25 @@ Lưu ý: Đừng chia sẻ tài khoản với ai nhé! ❤️
 import threading
 import os
 
-app = Flask(__name__)
+from flask import Flask
+import threading
+import os
 
-@app.route('/')
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
 def home():
-    return "Bot is alive!"
+    return "Telegram Bot is running on Render!"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 10000))  # Render tự set PORT
+    flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
+    # Chạy Flask trong thread riêng
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Chạy bot polling chính
+    print("🤖 Bot đang chạy... (với fake Flask server cho Render)")
     bot.infinity_polling()
-# ================== CHẠY BOT ==================
-print("🤖 Bot đang chạy... (chỉ gửi link PayOS, không gửi ảnh QR)")
 
-bot.infinity_polling()
