@@ -24,7 +24,8 @@ ADMIN_ID = int(os.getenv('ADMIN_ID'))
 # Danh sách loại tài khoản + giá (bạn có thể sửa thoải mái)
 CATEGORIES = {
     "capcut": {"name": "CapCut Premium 7D", "price": 2000},
-    "hotspot": {"name": "Hotspot Shield 7D", "price": 2000}
+    "hotspot": {"name": "Hotspot Shield 7D", "price": 2000},
+    "gemini": {"name": "Gemini Pro 30D", "price": 50000}
 }
 
 # ================== CHỐNG DUPLICATE ĐƠN HÀNG ==================
@@ -252,4 +253,5 @@ if __name__ == "__main__":
     # Chạy bot polling chính
     print("🤖 Bot đang chạy... (với fake Flask server cho Render)")
     bot.infinity_polling()
+
 
