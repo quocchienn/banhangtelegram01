@@ -227,6 +227,24 @@ Lưu ý: Đừng chia sẻ tài khoản với ai nhé! ❤️
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi xử lý: {str(e)}")
         print("Lỗi giao hàng:", str(e))
+        from flask import Flask
+import threading
+import os
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
+    bot.infinity_polling()
 # ================== CHẠY BOT ==================
 print("🤖 Bot đang chạy... (chỉ gửi link PayOS, không gửi ảnh QR)")
+
 bot.infinity_polling()
