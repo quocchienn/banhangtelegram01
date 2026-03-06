@@ -28,8 +28,24 @@ CATEGORIES = {
     "gemini": {"name": "Gemini Pro 30D", "price": 50000}
 }
 
-# ================== CHỐNG DUPLICATE ĐƠN HÀNG ==================
-processed_callbacks = set()  # Lưu ID của callback đã xử lý
+# Collection lưu trạng thái category (enabled/disabled)
+categories_collection = db['categories']
+
+# Khởi tạo mặc định nếu chưa có
+for code in CATEGORIES:
+    categories_collection.update_one(
+        {"code": code},
+        {"$setOnInsert": {
+            "code": code,
+            "name": CATEGORIES[code]["name"],
+            "price": CATEGORIES[code]["price"],
+            "enabled": True
+        }},
+        upsert=True
+    )
+
+# ================== CHỐNG DUPLICATE ==================
+processed_callbacks = set()
 
 # ================== HÀM HỖ TRỢ ==================
 def generate_order_code():
@@ -60,9 +76,8 @@ def handle_update_stock(call):
     if call.from_user.id != ADMIN_ID:
         return
     category = call.data.split("_")[1]
-    bot.send_message(call.message.chat.id, f"📤 Gửi file TXT chứa tài khoản {CATEGORIES[category]['name']}\n(Mỗi dòng 1 tài khoản, ví dụ: email:pass)")
-    
-    processed_callbacks.add(call.id)  # tránh lặp
+    bot.send_message(call.message.chat.id, f"📤 Gửi file TXT chứa tài khoản {CATEGORIES[category]['name']}\n(Mỗi dòng 1 tài khoản)")
+    processed_callbacks.add(call.id)
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
@@ -73,24 +88,89 @@ def handle_document(message):
     downloaded = bot.download_file(file_info.file_path)
     accounts = [line.decode('utf-8').strip() for line in downloaded.splitlines() if line.strip()]
     
-    # Tự động phát hiện category từ tên file (có thể cải tiến sau)
     for cat in CATEGORIES:
         if cat.lower() in message.document.file_name.lower():
             add_to_stock(cat, accounts)
-            bot.reply_to(message, f"✅ Đã thêm **{len(accounts)}** tài khoản vào {CATEGORIES[cat]['name']}!")
+            added_count = len(accounts)
+            
+            # Tự động bật lại sản phẩm nếu trước đó bị ẩn do hết hàng
+            categories_collection.update_one(
+                {"code": cat},
+                {"$set": {"enabled": True}}
+            )
+            
+            bot.reply_to(message, f"✅ Đã thêm **{added_count}** tài khoản vào {CATEGORIES[cat]['name']}!\nSản phẩm đã được mở bán lại.")
             return
+    
     bot.reply_to(message, "❌ Không nhận diện được loại tài khoản từ tên file!")
 
-# ================== USER MUA HÀNG ==================
+# ================== LỆNH TOGGLE KHÓA/MỞ SẢN PHẨM ==================
+@bot.message_handler(commands=['toggle'])
+def toggle_product(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin dùng lệnh này!")
+    
+    try:
+        code = message.text.split()[1].lower()
+        if code not in CATEGORIES:
+            return bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ. Các mã: {', '.join(CATEGORIES.keys())}")
+        
+        current = categories_collection.find_one({"code": code})
+        new_status = not current.get("enabled", True)
+        
+        categories_collection.update_one(
+            {"code": code},
+            {"$set": {"enabled": new_status}}
+        )
+        
+        status_text = "MỞ BÁN" if new_status else "KHÓA"
+        bot.reply_to(message, f"✅ Đã **{status_text}** sản phẩm {CATEGORIES[code]['name']} ({code})")
+    except IndexError:
+        bot.reply_to(message, "Sử dụng: /toggle <mã sản phẩm>\nVí dụ: /toggle spotify")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+# ================== MENU MUA HÀNG (TỰ ĐỘNG ẨN KHI HẾT HÀNG / KHÓA) ==================
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    
+    has_available = False
     for code, info in CATEGORIES.items():
-        markup.add(telebot.types.InlineKeyboardButton(
-            f"🛒 Mua {info['name']} - {info['price']:,}đ", callback_data=f"buy_{code}"
-        ))
+        # Kiểm tra trạng thái enabled
+        cat_doc = categories_collection.find_one({"code": code})
+        enabled = cat_doc.get("enabled", True) if cat_doc else True
+        
+        # Kiểm tra stock thực tế
+        stock_doc = db.stocks.find_one({"category": code})
+        stock_count = len(stock_doc.get("accounts", [])) if stock_doc else 0
+        
+        if enabled and stock_count > 0:
+            has_available = True
+            markup.add(telebot.types.InlineKeyboardButton(
+                f"🛒 Mua {info['name']} - {info['price']:,}đ (còn {stock_count})",
+                callback_data=f"buy_{code}"
+            ))
+        else:
+            status_text = "🔒 Hết hàng" if stock_count == 0 else "🔧 Tạm khóa"
+            markup.add(telebot.types.InlineKeyboardButton(
+                f"{info['name']} - {status_text}",
+                callback_data=f"info_outofstock_{code}"
+            ))
+    
+    if not has_available:
+        bot.send_message(message.chat.id, "Hiện tại tất cả sản phẩm đang hết hàng hoặc bị khóa. Vui lòng quay lại sau nhé! 😔")
+        return
+    
     bot.send_message(message.chat.id, "👋 Chào bạn! Chọn tài khoản Pro bạn muốn mua:", reply_markup=markup)
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("info_outofstock_"))
+def handle_outofstock_info(call):
+    code = call.data.split("_")[2]
+    info = CATEGORIES.get(code, {})
+    bot.answer_callback_query(call.id, text=f"{info.get('name', 'Sản phẩm')} hiện đang hết hàng hoặc tạm khóa. Admin sẽ cập nhật sớm!", show_alert=True)
+
+# ================== XỬ LÝ MUA HÀNG ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     if call.id in processed_callbacks:
@@ -103,7 +183,6 @@ def handle_buy(call):
         info = CATEGORIES[category]
         order_code = generate_order_code()
 
-        # Lưu đơn hàng
         db.orders.insert_one({
             "order_code": order_code,
             "user_id": call.from_user.id,
@@ -114,7 +193,6 @@ def handle_buy(call):
             "created_at": datetime.now()
         })
 
-        # Tạo link PayOS
         payment_data = CreatePaymentLinkRequest(
             order_code=order_code,
             amount=info["price"],
@@ -124,134 +202,108 @@ def handle_buy(call):
         )
         payment_link = payos.payment_requests.create(payment_data)
 
-        # Tin nhắn gửi cho người dùng (không gửi ảnh QR nữa)
         text = f"""
-✅ Đơn hàng #{order_code} đã tạo thành công!
+✅ Đơn hàng #{order_code} đã tạo!
 
 💰 Số tiền: {info['price']:,}đ
 📦 Sản phẩm: {info['name']}
 
-🔗 Thanh toán ngay tại đây:
+🔗 Thanh toán ngay:
 {payment_link.checkout_url}
 
-📲 Mở link → trang sẽ hiển thị mã QR  để quét hoặc thông tin chuyển khoản.
-Sau khi thanh toán thành công, admin sẽ gửi tài khoản cho bạn trong vài phút, nếu có vấn đề gì hãy liên hệ admin nhé! ❤️
+Mở link để xem QR code lớn hoặc chuyển khoản theo hướng dẫn.
         """
         bot.send_message(call.message.chat.id, text)
 
-        # Thông báo cho admin
         admin_text = f"""
-🛒 ĐƠN HÀNG MỚI!
-Mã đơn: #{order_code}
-Người mua: @{call.from_user.username or call.from_user.first_name} ({call.from_user.id})
+🛒 ĐƠN MỚI!
+Mã: #{order_code}
+Người: @{call.from_user.username or call.from_user.first_name} ({call.from_user.id})
 Sản phẩm: {info['name']}
-Số tiền: {info['price']:,}đ
-Link thanh toán: {payment_link.checkout_url}
+Giá: {info['price']:,}đ
+Link: {payment_link.checkout_url}
         """
         bot.send_message(ADMIN_ID, admin_text)
 
         bot.answer_callback_query(call.id, text="Đơn hàng đã tạo!", show_alert=False)
 
     except Exception as e:
-        bot.answer_callback_query(call.id, text="❌ Lỗi xảy ra, thử lại sau", show_alert=True)
+        bot.answer_callback_query(call.id, text="❌ Lỗi: " + str(e)[:100], show_alert=True)
         print("Lỗi tạo đơn:", str(e))
 
-# ================== ADMIN GIAO TÀI KHOẢN ==================
+# ================== ADMIN GIAO TÀI KHOẢN (TỰ ĐỘNG LẤY TỪ STOCK) ==================
 @bot.message_handler(func=lambda m: m.text and m.text.strip().upper().startswith("GIAO"))
 def handle_delivery(message):
     if message.from_user.id != ADMIN_ID:
         return
 
     try:
-        # Lấy mã đơn từ tin nhắn
         parts = message.text.strip().split(maxsplit=1)
         if len(parts) < 2:
             return bot.reply_to(message, "❌ Format: GIAO <mã đơn>\nVí dụ: GIAO 12345678")
 
-        order_code_str = parts[1].strip()
-        order_code = int(order_code_str)
+        order_code = int(parts[1].strip())
 
-        # Tìm đơn hàng pending
         order = db.orders.find_one({"order_code": order_code, "status": "pending"})
         if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn hàng pending với mã này hoặc đã giao rồi!")
+            return bot.reply_to(message, "❌ Không tìm thấy đơn pending!")
 
         category = order["category"]
         user_id = order["user_id"]
 
-        # Tìm stock của category
         stock_doc = db.stocks.find_one({"category": category})
-        if not stock_doc or not stock_doc.get("accounts") or len(stock_doc["accounts"]) == 0:
-            bot.send_message(ADMIN_ID, f"⚠️ HẾT TÀI KHOẢN {CATEGORIES[category]['name']}!\nĐơn #{order_code} chưa giao được.")
-            bot.send_message(user_id, "⏳ Đơn hàng của bạn đang chờ xử lý. Tài khoản tạm hết, admin sẽ bổ sung sớm. Xin lỗi vì sự chậm trễ!")
-            return bot.reply_to(message, f"❌ Hết stock {CATEGORIES[category]['name']}! Đơn #{order_code} chưa giao.")
+        if not stock_doc or not stock_doc.get("accounts"):
+            bot.send_message(ADMIN_ID, f"⚠️ HẾT STOCK {CATEGORIES[category]['name']}! Đơn #{order_code} chưa giao.")
+            bot.send_message(user_id, "⏳ Tài khoản tạm hết, admin đang bổ sung. Xin lỗi vì sự chậm trễ!")
+            return bot.reply_to(message, f"❌ Hết stock {CATEGORIES[category]['name']}!")
 
-        # Lấy và xóa 1 tài khoản đầu tiên (FIFO)
+        # Lấy và xóa 1 tài khoản đầu tiên
         account = stock_doc["accounts"][0]
         db.stocks.update_one(
             {"category": category},
-            {"$pop": {"accounts": -1}}   # -1 = pop từ đầu mảng
+            {"$pop": {"accounts": -1}}
         )
 
-        # Gửi cho người mua
+        # Gửi cho user
         buyer_text = f"""
-🎉 Tài khoản của bạn đã được giao thành công!
+🎉 Tài khoản đã được giao!
 
-Đơn hàng: #{order_code}
+Đơn: #{order_code}
 Sản phẩm: {CATEGORIES[category]['name']}
 Tài khoản:
 {account}
 
-Lưu ý: Đừng chia sẻ tài khoản với ai nhé! ❤️
+Cảm ơn bạn! ❤️
         """
         bot.send_message(user_id, buyer_text)
 
-        # Cập nhật trạng thái đơn
+        # Cập nhật đơn
         db.orders.update_one(
             {"order_code": order_code},
-            {"$set": {
-                "status": "delivered",
-                "delivered_at": datetime.now(),
-                "account_delivered": account
-            }}
+            {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}}
         )
 
-        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}\nTài khoản: {account}\nCòn lại: {len(stock_doc['accounts']) - 1} tk")
-
-        # Nếu sau khi pop còn ít hơn 5 tài khoản → cảnh báo admin
         remaining = len(stock_doc["accounts"]) - 1
+        bot.reply_to(message, f"✅ Giao thành công đơn #{order_code}\nCòn lại: {remaining} tk")
+
+        # Nếu còn ít → cảnh báo admin
         if remaining <= 5:
             bot.send_message(ADMIN_ID, f"⚠️ Stock {CATEGORIES[category]['name']} sắp hết! Chỉ còn {remaining} tài khoản.")
 
+        # Nếu hết hẳn → tắt enabled
+        if remaining == 0:
+            categories_collection.update_one(
+                {"code": category},
+                {"$set": {"enabled": False}}
+            )
+            bot.send_message(ADMIN_ID, f"🔒 Đã tự động khóa {CATEGORIES[category]['name']} vì hết hàng.")
+
     except ValueError:
-        bot.reply_to(message, "❌ Mã đơn phải là số! Ví dụ: GIAO 12345678")
+        bot.reply_to(message, "❌ Mã đơn phải là số!")
     except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi xử lý: {str(e)}")
-        print("Lỗi giao hàng:", str(e))
-        from flask import Flask
-import threading
-import os
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+        print("Lỗi giao:", str(e))
 
-from flask import Flask
-import threading
-import os
-
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def home():
-    return "Telegram Bot is running on Render!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))  # Render tự set PORT
-    flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-
-if __name__ == "__main__":
-    # Chạy Flask trong thread riêng
-    threading.Thread(target=run_flask, daemon=True).start()
-    
-    # Chạy bot polling chính
-    print("🤖 Bot đang chạy... (với fake Flask server cho Render)")
-    bot.infinity_polling()
-
-
+# ================== CHẠY BOT ==================
+print("🤖 Bot đang chạy...")
+bot.infinity_polling()
