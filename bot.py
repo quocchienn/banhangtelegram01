@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from payos import PayOS
 from payos.types import CreatePaymentLinkRequest
+from flask import Flask, request, abort
+import threading
+import time
 
 load_dotenv()
 
@@ -28,10 +31,11 @@ CATEGORIES = {
     "gemini": {"name": "Gemini Pro 30D", "price": 50000}
 }
 
-# Collection lưu trạng thái category (enabled/disabled)
+
+# Collection lưu trạng thái category
 categories_collection = db['categories']
 
-# Khởi tạo mặc định nếu chưa có
+# Khởi tạo mặc định
 for code in CATEGORIES:
     categories_collection.update_one(
         {"code": code},
@@ -44,7 +48,6 @@ for code in CATEGORIES:
         upsert=True
     )
 
-# ================== CHỐNG DUPLICATE ==================
 processed_callbacks = set()
 
 # ================== HÀM HỖ TRỢ ==================
@@ -93,7 +96,6 @@ def handle_document(message):
             add_to_stock(cat, accounts)
             added_count = len(accounts)
             
-            # Tự động bật lại sản phẩm nếu trước đó bị ẩn do hết hàng
             categories_collection.update_one(
                 {"code": cat},
                 {"$set": {"enabled": True}}
@@ -104,7 +106,7 @@ def handle_document(message):
     
     bot.reply_to(message, "❌ Không nhận diện được loại tài khoản từ tên file!")
 
-# ================== LỆNH TOGGLE KHÓA/MỞ SẢN PHẨM ==================
+# ================== TOGGLE ==================
 @bot.message_handler(commands=['toggle'])
 def toggle_product(message):
     if message.from_user.id != ADMIN_ID:
@@ -113,7 +115,7 @@ def toggle_product(message):
     try:
         code = message.text.split()[1].lower()
         if code not in CATEGORIES:
-            return bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ. Các mã: {', '.join(CATEGORIES.keys())}")
+            return bot.reply_to(message, f"❌ Mã không hợp lệ: {', '.join(CATEGORIES.keys())}")
         
         current = categories_collection.find_one({"code": code})
         new_status = not current.get("enabled", True)
@@ -124,24 +126,22 @@ def toggle_product(message):
         )
         
         status_text = "MỞ BÁN" if new_status else "KHÓA"
-        bot.reply_to(message, f"✅ Đã **{status_text}** sản phẩm {CATEGORIES[code]['name']} ({code})")
+        bot.reply_to(message, f"✅ Đã **{status_text}** {CATEGORIES[code]['name']} ({code})")
     except IndexError:
-        bot.reply_to(message, "Sử dụng: /toggle <mã sản phẩm>\nVí dụ: /toggle spotify")
+        bot.reply_to(message, "Sử dụng: /toggle <mã>\nVí dụ: /toggle spotify")
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
-# ================== MENU MUA HÀNG (TỰ ĐỘNG ẨN KHI HẾT HÀNG / KHÓA) ==================
+# ================== MENU START ==================
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    
     has_available = False
+    
     for code, info in CATEGORIES.items():
-        # Kiểm tra trạng thái enabled
         cat_doc = categories_collection.find_one({"code": code})
         enabled = cat_doc.get("enabled", True) if cat_doc else True
         
-        # Kiểm tra stock thực tế
         stock_doc = db.stocks.find_one({"category": code})
         stock_count = len(stock_doc.get("accounts", [])) if stock_doc else 0
         
@@ -159,7 +159,7 @@ def start(message):
             ))
     
     if not has_available:
-        bot.send_message(message.chat.id, "Hiện tại tất cả sản phẩm đang hết hàng hoặc bị khóa. Vui lòng quay lại sau nhé! 😔")
+        bot.send_message(message.chat.id, "Hiện tại tất cả sản phẩm đang hết hoặc bị khóa. Vui lòng quay lại sau! 😔")
         return
     
     bot.send_message(message.chat.id, "👋 Chào bạn! Chọn tài khoản Pro bạn muốn mua:", reply_markup=markup)
@@ -170,11 +170,11 @@ def handle_outofstock_info(call):
     info = CATEGORIES.get(code, {})
     bot.answer_callback_query(call.id, text=f"{info.get('name', 'Sản phẩm')} hiện đang hết hàng hoặc tạm khóa. Admin sẽ cập nhật sớm!", show_alert=True)
 
-# ================== XỬ LÝ MUA HÀNG ==================
+# ================== MUA HÀNG ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     if call.id in processed_callbacks:
-        bot.answer_callback_query(call.id, text="✅ Đơn đã được tạo!", show_alert=False)
+        bot.answer_callback_query(call.id, text="✅ Đơn đã tạo!", show_alert=False)
         return
     processed_callbacks.add(call.id)
 
@@ -211,7 +211,7 @@ def handle_buy(call):
 🔗 Thanh toán ngay:
 {payment_link.checkout_url}
 
-Mở link để xem QR code lớn hoặc chuyển khoản theo hướng dẫn.
+Mở link để xem QR hoặc chuyển khoản.
         """
         bot.send_message(call.message.chat.id, text)
 
@@ -231,7 +231,7 @@ Link: {payment_link.checkout_url}
         bot.answer_callback_query(call.id, text="❌ Lỗi: " + str(e)[:100], show_alert=True)
         print("Lỗi tạo đơn:", str(e))
 
-# ================== ADMIN GIAO TÀI KHOẢN (TỰ ĐỘNG LẤY TỪ STOCK) ==================
+# ================== GIAO TÀI KHOẢN ==================
 @bot.message_handler(func=lambda m: m.text and m.text.strip().upper().startswith("GIAO"))
 def handle_delivery(message):
     if message.from_user.id != ADMIN_ID:
@@ -240,7 +240,7 @@ def handle_delivery(message):
     try:
         parts = message.text.strip().split(maxsplit=1)
         if len(parts) < 2:
-            return bot.reply_to(message, "❌ Format: GIAO <mã đơn>\nVí dụ: GIAO 12345678")
+            return bot.reply_to(message, "❌ Format: GIAO <mã đơn>")
 
         order_code = int(parts[1].strip())
 
@@ -253,20 +253,18 @@ def handle_delivery(message):
 
         stock_doc = db.stocks.find_one({"category": category})
         if not stock_doc or not stock_doc.get("accounts"):
-            bot.send_message(ADMIN_ID, f"⚠️ HẾT STOCK {CATEGORIES[category]['name']}! Đơn #{order_code} chưa giao.")
-            bot.send_message(user_id, "⏳ Tài khoản tạm hết, admin đang bổ sung. Xin lỗi vì sự chậm trễ!")
+            bot.send_message(ADMIN_ID, f"⚠️ HẾT STOCK {CATEGORIES[category]['name']}! Đơn #{order_code}")
+            bot.send_message(user_id, "⏳ Tài khoản tạm hết, admin đang bổ sung.")
             return bot.reply_to(message, f"❌ Hết stock {CATEGORIES[category]['name']}!")
 
-        # Lấy và xóa 1 tài khoản đầu tiên
         account = stock_doc["accounts"][0]
         db.stocks.update_one(
             {"category": category},
             {"$pop": {"accounts": -1}}
         )
 
-        # Gửi cho user
         buyer_text = f"""
-🎉 Tài khoản đã được giao!
+🎉 Tài khoản đã giao!
 
 Đơn: #{order_code}
 Sản phẩm: {CATEGORIES[category]['name']}
@@ -277,26 +275,23 @@ Cảm ơn bạn! ❤️
         """
         bot.send_message(user_id, buyer_text)
 
-        # Cập nhật đơn
         db.orders.update_one(
             {"order_code": order_code},
             {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}}
         )
 
         remaining = len(stock_doc["accounts"]) - 1
-        bot.reply_to(message, f"✅ Giao thành công đơn #{order_code}\nCòn lại: {remaining} tk")
+        bot.reply_to(message, f"✅ Giao thành công #{order_code} | Còn: {remaining}")
 
-        # Nếu còn ít → cảnh báo admin
         if remaining <= 5:
-            bot.send_message(ADMIN_ID, f"⚠️ Stock {CATEGORIES[category]['name']} sắp hết! Chỉ còn {remaining} tài khoản.")
+            bot.send_message(ADMIN_ID, f"⚠️ Stock {CATEGORIES[category]['name']} sắp hết! Còn {remaining}")
 
-        # Nếu hết hẳn → tắt enabled
         if remaining == 0:
             categories_collection.update_one(
                 {"code": category},
                 {"$set": {"enabled": False}}
             )
-            bot.send_message(ADMIN_ID, f"🔒 Đã tự động khóa {CATEGORIES[category]['name']} vì hết hàng.")
+            bot.send_message(ADMIN_ID, f"🔒 Tự động khóa {CATEGORIES[category]['name']} vì hết hàng.")
 
     except ValueError:
         bot.reply_to(message, "❌ Mã đơn phải là số!")
@@ -304,6 +299,37 @@ Cảm ơn bạn! ❤️
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
         print("Lỗi giao:", str(e))
 
-# ================== CHẠY BOT ==================
-print("🤖 Bot đang chạy...")
-bot.infinity_polling()
+# ================== FLASK + POLLING CHO RENDER ==================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Bot is alive on Render!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Flask listening on 0.0.0.0:{port}")
+    flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+if __name__ == "__main__":
+    # Chạy Flask trong thread riêng
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    time.sleep(2)  # Đợi Flask khởi động
+
+    print("🤖 Bot đang chạy... (với Flask cho Render + retry polling)")
+
+    while True:
+        try:
+            bot.remove_webhook()  # Đảm bảo không dùng webhook cũ
+            bot.infinity_polling(timeout=20, long_polling_timeout=50)
+        except telebot.apihelper.ApiTelegramException as e:
+            if "terminated by other getUpdates" in str(e):
+                print("Conflict 409 detected → retry sau 10 giây...")
+                time.sleep(10)
+            else:
+                print("Lỗi Telegram API:", str(e))
+                time.sleep(5)
+        except Exception as e:
+            print("Polling lỗi:", str(e))
+            time.sleep(5)
