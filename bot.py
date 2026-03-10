@@ -26,9 +26,8 @@ ADMIN_ID = int(os.getenv('ADMIN_ID'))
 
 # Danh sách loại tài khoản + giá (bạn có thể sửa thoải mái)
 CATEGORIES = {
-    "capcut": {"name": "CapCut Premium 7D", "price": 2000},
     "hotspot": {"name": "Hotspot Shield 7D", "price": 2000},
-    "gemini": {"name": "Gemini Pro 30D", "price": 50000}
+    "gemini": {"name": "Gemini Pro 1 Acc Duy Nhất 26-29D", "price": 40000}
 }
 
 
@@ -333,3 +332,4 @@ if __name__ == "__main__":
         except Exception as e:
             print("Polling lỗi:", str(e))
             time.sleep(5)
+
