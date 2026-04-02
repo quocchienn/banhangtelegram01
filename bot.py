@@ -25,8 +25,8 @@ db = client['ban_taikhoan_pro']
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 
 # Collections
-users = db['users']          # user + số dư ví
-orders = db['orders']        # đơn hàng
+users = db['users']          # user info + balance
+orders = db['orders']        # đơn hàng (mua & nạp)
 stocks = db['stocks']        # stock tài khoản
 categories = db['categories']
 
@@ -85,7 +85,6 @@ def add_to_stock(category, accounts_list):
 def start(message):
     user = get_user(message.from_user.id)
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    has_available = False
 
     for code, info in CATEGORIES.items():
         cat_doc = categories.find_one({"code": code})
@@ -94,7 +93,6 @@ def start(message):
         stock_count = len(stock_doc.get("accounts", [])) if stock_doc else 0
 
         if enabled and stock_count > 0:
-            has_available = True
             markup.add(telebot.types.InlineKeyboardButton(
                 f"🛒 Mua {info['name']} - {info['price']:,}đ (còn {stock_count})",
                 callback_data=f"buy_{code}"
@@ -104,8 +102,7 @@ def start(message):
     markup.add(telebot.types.InlineKeyboardButton("💳 Nạp tiền vào ví", callback_data="deposit"))
 
     bot.send_message(message.chat.id, 
-        f"👋 Chào **{message.from_user.first_name}**!\n\n"
-        f"Chọn tài khoản Pro bạn muốn mua:", 
+        f"👋 Chào **{message.from_user.first_name}**!\n\nChọn tài khoản Pro bạn muốn mua:", 
         parse_mode='Markdown', reply_markup=markup)
 
 @bot.message_handler(commands=['me', 'info'])
@@ -223,7 +220,49 @@ def process_custom_deposit(message):
     except Exception as e:
         bot.reply_to(message, f"Lỗi: {str(e)}")
 
-# ================== MUA HÀNG (từ ví hoặc PayOS) ==================
+# ================== ADMIN DUYỆT NẠP TIỀN THỦ CÔNG ==================
+@bot.message_handler(commands=['duyetnap'])
+def admin_duyet_nap(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
+
+    try:
+        order_code = int(message.text.split()[1])
+        order = orders.find_one({"order_code": order_code, "type": "deposit", "status": "pending"})
+
+        if not order:
+            return bot.reply_to(message, "❌ Không tìm thấy đơn nạp pending với mã này!")
+
+        user_id = order['user_id']
+        amount = order['amount']
+
+        # Cộng tiền vào ví
+        update_balance(user_id, amount)
+
+        # Cập nhật trạng thái đơn
+        orders.update_one(
+            {"order_code": order_code},
+            {"$set": {"status": "approved", "approved_at": datetime.now()}}
+        )
+
+        # Thông báo cho user
+        bot.send_message(user_id, f"""
+✅ **Nạp tiền đã được duyệt!**
+
+Số tiền: +{amount:,}đ
+Số dư hiện tại: {get_user(user_id)['balance']:,}đ
+
+Cảm ơn bạn đã nạp tiền!
+        """)
+
+        bot.reply_to(message, f"✅ Đã duyệt nạp tiền #{order_code} - Cộng {amount:,}đ cho user {user_id}")
+
+    except (IndexError, ValueError):
+        bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>\nVí dụ: /duyetnap 12345678")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+# ================== MUA HÀNG (TRỪ TIỀN VÍ NẾU ĐỦ) ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     category = call.data.split("_")[1]
@@ -236,10 +275,10 @@ def handle_buy(call):
 
     # Kiểm tra số dư ví
     if user.get("balance", 0) >= price:
-        # Thanh toán từ ví
+        # Trừ tiền ví
         update_balance(call.from_user.id, -price)
 
-        # Lấy tài khoản từ stock
+        # Giao tài khoản
         stock_doc = stocks.find_one({"category": category})
         if stock_doc and stock_doc.get("accounts"):
             account = stock_doc["accounts"].pop(0)
@@ -262,6 +301,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
             "user_id": call.from_user.id,
             "category": category,
             "amount": price,
+            "type": "purchase",
             "status": "pending",
             "created_at": datetime.now()
         })
@@ -286,37 +326,8 @@ Số dư còn lại: {user['balance'] - price:,}đ
 
     bot.answer_callback_query(call.id)
 
-# ================== FLASK + WEBHOOK ==================
+# ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
-
-@flask_app.route('/payos-webhook', methods=['POST'])
-def payos_webhook():
-    try:
-        data = request.json
-        webhook_data = payos.webhooks.verify(data)
-
-        if webhook_data.success:
-            order_code = webhook_data.data.get('orderCode')
-            order = orders.find_one({"order_code": order_code})
-
-            if order and order['status'] == 'pending':
-                orders.update_one(
-                    {"order_code": order_code},
-                    {"$set": {"status": "paid", "paid_at": datetime.now()}}
-                )
-
-                user_id = order['user_id']
-                amount = order['amount']
-
-                if order.get('type') == 'deposit':
-                    update_balance(user_id, amount)
-                    bot.send_message(user_id, f"✅ **Nạp tiền thành công!**\nSố tiền: {amount:,}đ\nSố dư hiện tại: {get_user(user_id)['balance']:,}đ")
-                # Có thể thêm xử lý mua hàng từ PayOS sau này
-
-    except Exception as e:
-        print("Webhook error:", str(e))
-
-    return "OK", 200
 
 @flask_app.route('/')
 def home():
