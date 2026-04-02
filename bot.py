@@ -25,9 +25,9 @@ db = client['ban_taikhoan_pro']
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 
 # Collections
-users = db['users']          # user info + balance
-orders = db['orders']        # đơn hàng (mua & nạp)
-stocks = db['stocks']        # stock tài khoản
+users = db['users']          # Thông tin user + số dư ví
+orders = db['orders']        # Đơn hàng (mua & nạp)
+stocks = db['stocks']        # Stock tài khoản
 categories = db['categories']
 
 # Categories
@@ -37,7 +37,7 @@ CATEGORIES = {
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000},
 }
 
-# Khởi tạo categories
+# Khởi tạo categories mặc định
 for code, info in CATEGORIES.items():
     categories.update_one(
         {"code": code},
@@ -85,6 +85,7 @@ def add_to_stock(category, accounts_list):
 def start(message):
     user = get_user(message.from_user.id)
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    has_available = False
 
     for code, info in CATEGORIES.items():
         cat_doc = categories.find_one({"code": code})
@@ -93,6 +94,7 @@ def start(message):
         stock_count = len(stock_doc.get("accounts", [])) if stock_doc else 0
 
         if enabled and stock_count > 0:
+            has_available = True
             markup.add(telebot.types.InlineKeyboardButton(
                 f"🛒 Mua {info['name']} - {info['price']:,}đ (còn {stock_count})",
                 callback_data=f"buy_{code}"
@@ -108,11 +110,11 @@ def start(message):
 @bot.message_handler(commands=['me', 'info'])
 def show_info(message):
     user = get_user(message.from_user.id)
-    joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y')
+    joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y %H:%M')
 
     text = f"""
 🆔 **ID:** `{message.from_user.id}`
-👤 **Tên:** {message.from_user.first_name}
+👤 **Tên:** {message.from_user.first_name or message.from_user.username or 'Không có tên'}
 💰 **Số dư:** `{user.get('balance', 0):,}đ`
 📅 **Tham gia:** {joined}
     """
@@ -131,6 +133,26 @@ def admin_view_balances(message):
         text += f"👤 {username} (ID: `{u['user_id']}`) → 💰 `{u.get('balance', 0):,}đ`\n"
 
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+# ================== XEM VÍ CỦA TÔI (ĐÃ SỬA) ==================
+@bot.callback_query_handler(func=lambda call: call.data == "my_wallet")
+def show_wallet(call):
+    try:
+        user = get_user(call.from_user.id)
+        joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y %H:%M')
+
+        text = f"""
+🆔 **ID:** `{call.from_user.id}`
+👤 **Tên:** {call.from_user.first_name or call.from_user.username or 'Không có tên'}
+💰 **Số dư:** `{user.get('balance', 0):,}đ`
+📅 **Tham gia:** {joined}
+        """
+
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
+    except Exception as e:
+        bot.answer_callback_query(call.id, text="❌ Lỗi hiển thị ví. Thử lại sau!", show_alert=True)
+        print("Lỗi show_wallet:", str(e))
 
 # ================== NẠP TIỀN ==================
 @bot.callback_query_handler(func=lambda call: call.data == "deposit")
@@ -273,12 +295,10 @@ def handle_buy(call):
     user = get_user(call.from_user.id)
     price = info["price"]
 
-    # Kiểm tra số dư ví
     if user.get("balance", 0) >= price:
-        # Trừ tiền ví
+        # Trừ tiền ví và giao tài khoản
         update_balance(call.from_user.id, -price)
 
-        # Giao tài khoản
         stock_doc = stocks.find_one({"category": category})
         if stock_doc and stock_doc.get("accounts"):
             account = stock_doc["accounts"].pop(0)
