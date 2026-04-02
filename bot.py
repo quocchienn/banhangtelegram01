@@ -24,20 +24,20 @@ db = client['ban_taikhoan_pro']
 
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 
-# ================== COLLECTIONS ==================
-users = db['users']          # Lưu thông tin user + số dư ví
-orders = db['orders']        # Lưu đơn hàng
-stocks = db['stocks']        # Lưu stock tài khoản
+# Collections
+users = db['users']          # user + số dư ví
+orders = db['orders']        # đơn hàng
+stocks = db['stocks']        # stock tài khoản
 categories = db['categories']
 
-# ================== CATEGORIES (có thể mở rộng) ==================
+# Categories
 CATEGORIES = {
     "hotspot": {"name": "Hotspot Shield 7D", "price": 2000},
     "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000},
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000},
 }
 
-# Khởi tạo categories mặc định
+# Khởi tạo categories
 for code, info in CATEGORIES.items():
     categories.update_one(
         {"code": code},
@@ -49,8 +49,6 @@ for code, info in CATEGORIES.items():
         }},
         upsert=True
     )
-
-processed_callbacks = set()
 
 # ================== HÀM HỖ TRỢ ==================
 def get_user(user_id):
@@ -92,7 +90,6 @@ def start(message):
     for code, info in CATEGORIES.items():
         cat_doc = categories.find_one({"code": code})
         enabled = cat_doc.get("enabled", True) if cat_doc else True
-
         stock_doc = stocks.find_one({"category": code})
         stock_count = len(stock_doc.get("accounts", [])) if stock_doc else 0
 
@@ -102,53 +99,58 @@ def start(message):
                 f"🛒 Mua {info['name']} - {info['price']:,}đ (còn {stock_count})",
                 callback_data=f"buy_{code}"
             ))
-        else:
-            status = "🔒 Hết hàng" if stock_count == 0 else "🔧 Tạm khóa"
-            markup.add(telebot.types.InlineKeyboardButton(
-                f"{info['name']} - {status}",
-                callback_data=f"info_outofstock_{code}"
-            ))
 
     markup.add(telebot.types.InlineKeyboardButton("💰 Ví của tôi", callback_data="my_wallet"))
     markup.add(telebot.types.InlineKeyboardButton("💳 Nạp tiền vào ví", callback_data="deposit"))
-
-    if not has_available:
-        bot.send_message(message.chat.id, "Hiện tại tất cả sản phẩm đang hết hoặc bị khóa. Vui lòng quay lại sau! 😔", reply_markup=markup)
-        return
 
     bot.send_message(message.chat.id, 
         f"👋 Chào **{message.from_user.first_name}**!\n\n"
         f"Chọn tài khoản Pro bạn muốn mua:", 
         parse_mode='Markdown', reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data == "my_wallet")
-def show_wallet(call):
-    user = get_user(call.from_user.id)
+@bot.message_handler(commands=['me', 'info'])
+def show_info(message):
+    user = get_user(message.from_user.id)
     joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y')
 
     text = f"""
-🆔 **ID:** `{call.from_user.id}`
-👤 **Tên:** {call.from_user.first_name}
+🆔 **ID:** `{message.from_user.id}`
+👤 **Tên:** {message.from_user.first_name}
 💰 **Số dư:** `{user.get('balance', 0):,}đ`
 📅 **Tham gia:** {joined}
     """
-    bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
+@bot.message_handler(commands=['users', 'balance'])
+def admin_view_balances(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
+
+    all_users = users.find().sort("balance", -1)
+    text = "📊 **DANH SÁCH SỐ DƯ USER**\n\n"
+
+    for u in all_users:
+        username = u.get('username') or u.get('first_name') or 'Unknown'
+        text += f"👤 {username} (ID: `{u['user_id']}`) → 💰 `{u.get('balance', 0):,}đ`\n"
+
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+# ================== NẠP TIỀN ==================
 @bot.callback_query_handler(func=lambda call: call.data == "deposit")
 def deposit_menu(call):
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("Nạp 50.000đ", callback_data="deposit_50000"))
-    markup.add(telebot.types.InlineKeyboardButton("Nạp 100.000đ", callback_data="deposit_100000"))
-    markup.add(telebot.types.InlineKeyboardButton("Nạp 200.000đ", callback_data="deposit_200000"))
-    markup.add(telebot.types.InlineKeyboardButton("Nạp số khác", callback_data="deposit_custom"))
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
+    markup.add(telebot.types.InlineKeyboardButton("100.000đ", callback_data="deposit_100000"))
+    markup.add(telebot.types.InlineKeyboardButton("200.000đ", callback_data="deposit_200000"))
+    markup.add(telebot.types.InlineKeyboardButton("Nhập số khác", callback_data="deposit_custom"))
 
     bot.answer_callback_query(call.id)
     bot.send_message(call.message.chat.id, "💳 Chọn số tiền muốn nạp vào ví:", reply_markup=markup)
 
-# ================== XỬ LÝ NẠP TIỀN ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("deposit_"))
 def handle_deposit(call):
+    bot.answer_callback_query(call.id)
+
     if call.data == "deposit_custom":
         bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (ví dụ: 50000):")
         bot.register_next_step_handler(call.message, process_custom_deposit)
@@ -156,6 +158,15 @@ def handle_deposit(call):
 
     amount = int(call.data.split("_")[1])
     order_code = generate_order_code()
+
+    orders.insert_one({
+        "order_code": order_code,
+        "user_id": call.from_user.id,
+        "type": "deposit",
+        "amount": amount,
+        "status": "pending",
+        "created_at": datetime.now()
+    })
 
     payment_data = CreatePaymentLinkRequest(
         order_code=order_code,
@@ -167,25 +178,14 @@ def handle_deposit(call):
 
     try:
         payment_link = payos.payment_requests.create(payment_data)
-
-        orders.insert_one({
-            "order_code": order_code,
-            "user_id": call.from_user.id,
-            "type": "deposit",
-            "amount": amount,
-            "status": "pending",
-            "created_at": datetime.now()
-        })
-
         bot.send_message(call.message.chat.id, 
             f"💰 **Nạp tiền vào ví**\n\n"
             f"Số tiền: {amount:,}đ\n"
             f"Mã đơn: #{order_code}\n\n"
             f"🔗 Thanh toán tại: {payment_link.checkout_url}", 
             parse_mode='Markdown')
-
     except Exception as e:
-        bot.send_message(call.message.chat.id, f"❌ Lỗi tạo link nạp tiền: {str(e)}")
+        bot.send_message(call.message.chat.id, f"❌ Lỗi tạo link nạp: {str(e)}")
 
 def process_custom_deposit(message):
     try:
@@ -193,17 +193,7 @@ def process_custom_deposit(message):
         if amount < 10000:
             return bot.reply_to(message, "Số tiền tối thiểu là 10.000đ!")
 
-        # Tạo link nạp tiền tương tự
         order_code = generate_order_code()
-        payment_data = CreatePaymentLinkRequest(
-            order_code=order_code,
-            amount=amount,
-            description=f"Nap vi {amount}đ",
-            return_url="https://t.me/" + bot.get_me().username,
-            cancel_url="https://t.me/" + bot.get_me().username
-        )
-        payment_link = payos.payment_requests.create(payment_data)
-
         orders.insert_one({
             "order_code": order_code,
             "user_id": message.from_user.id,
@@ -213,19 +203,27 @@ def process_custom_deposit(message):
             "created_at": datetime.now()
         })
 
+        payment_data = CreatePaymentLinkRequest(
+            order_code=order_code,
+            amount=amount,
+            description=f"Nap vi {amount}đ",
+            return_url="https://t.me/" + bot.get_me().username,
+            cancel_url="https://t.me/" + bot.get_me().username
+        )
+        payment_link = payos.payment_requests.create(payment_data)
+
         bot.send_message(message.chat.id, 
             f"💰 **Nạp tiền vào ví**\n\n"
             f"Số tiền: {amount:,}đ\n"
             f"Mã đơn: #{order_code}\n\n"
             f"🔗 Thanh toán tại: {payment_link.checkout_url}", 
             parse_mode='Markdown')
-
     except ValueError:
         bot.reply_to(message, "Vui lòng nhập số tiền hợp lệ!")
     except Exception as e:
         bot.reply_to(message, f"Lỗi: {str(e)}")
 
-# ================== XỬ LÝ CALLBACK MUA HÀNG (từ ví hoặc PayOS) ==================
+# ================== MUA HÀNG (từ ví hoặc PayOS) ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     category = call.data.split("_")[1]
@@ -236,10 +234,12 @@ def handle_buy(call):
     user = get_user(call.from_user.id)
     price = info["price"]
 
+    # Kiểm tra số dư ví
     if user.get("balance", 0) >= price:
         # Thanh toán từ ví
         update_balance(call.from_user.id, -price)
-        # Xử lý giao tài khoản (giống phần admin giao)
+
+        # Lấy tài khoản từ stock
         stock_doc = stocks.find_one({"category": category})
         if stock_doc and stock_doc.get("accounts"):
             account = stock_doc["accounts"].pop(0)
@@ -255,7 +255,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
         else:
             bot.send_message(call.from_user.id, "❌ Sản phẩm tạm hết hàng!")
     else:
-        # Tạo link PayOS như cũ
+        # Không đủ tiền → tạo link PayOS
         order_code = generate_order_code()
         orders.insert_one({
             "order_code": order_code,
@@ -286,8 +286,37 @@ Số dư còn lại: {user['balance'] - price:,}đ
 
     bot.answer_callback_query(call.id)
 
-# ================== FLASK + POLLING ==================
+# ================== FLASK + WEBHOOK ==================
 flask_app = Flask(__name__)
+
+@flask_app.route('/payos-webhook', methods=['POST'])
+def payos_webhook():
+    try:
+        data = request.json
+        webhook_data = payos.webhooks.verify(data)
+
+        if webhook_data.success:
+            order_code = webhook_data.data.get('orderCode')
+            order = orders.find_one({"order_code": order_code})
+
+            if order and order['status'] == 'pending':
+                orders.update_one(
+                    {"order_code": order_code},
+                    {"$set": {"status": "paid", "paid_at": datetime.now()}}
+                )
+
+                user_id = order['user_id']
+                amount = order['amount']
+
+                if order.get('type') == 'deposit':
+                    update_balance(user_id, amount)
+                    bot.send_message(user_id, f"✅ **Nạp tiền thành công!**\nSố tiền: {amount:,}đ\nSố dư hiện tại: {get_user(user_id)['balance']:,}đ")
+                # Có thể thêm xử lý mua hàng từ PayOS sau này
+
+    except Exception as e:
+        print("Webhook error:", str(e))
+
+    return "OK", 200
 
 @flask_app.route('/')
 def home():
@@ -306,7 +335,6 @@ if __name__ == "__main__":
 
     while True:
         try:
-            bot.remove_webhook()
             bot.infinity_polling(timeout=20, long_polling_timeout=50)
         except Exception as e:
             print("Polling lỗi:", str(e))
