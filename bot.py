@@ -29,11 +29,11 @@ stocks = db['stocks']
 categories = db['categories']
 
 CATEGORIES = {
-    "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal", "keywords": ["hotspot"]},
-    "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal", "keywords": ["gemini"]},
-    "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000, "type": "normal", "keywords": ["capcut", "cap cut"]},
-    "canva1slot": {"name": "Canva 1 Slot", "price": 2000, "type": "canva_1slot", "keywords": ["canva1", "canva 1 slot"]},
-    "canva100slot": {"name": "Canva 100 Slot", "price": 30000, "type": "normal", "keywords": ["canva100", "canva 100"]},
+    "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
+    "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal"},
+    "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000, "type": "normal"},
+    "canva1slot": {"name": "Canva 1 Slot", "price": 2000, "type": "canva_1slot"},
+    "canva100slot": {"name": "Canva 100 Slot", "price": 30000, "type": "normal"},
 }
 
 for code, info in CATEGORIES.items():
@@ -57,6 +57,33 @@ def generate_order_code():
 def get_stock_count(category):
     stock_doc = stocks.find_one({"category": category})
     return len(stock_doc.get("accounts", [])) if stock_doc else 0
+
+def notify_admin(order):
+    user = get_user(order["user_id"])
+    cat_name = CATEGORIES.get(order.get("category"), {}).get("name", "Nạp tiền")
+
+    if order["type"] == "deposit":
+        text = f"""
+💰 **ĐƠN NẠP TIỀN MỚI**
+
+Mã đơn: #{order['order_code']}
+User ID: `{order['user_id']}`
+Tên: {user.get('first_name', 'Không tên')}
+Số tiền: **{order['amount']:,}đ**
+Trạng thái: Chờ thanh toán
+        """
+    else:
+        text = f"""
+🛒 **ĐƠN MUA HÀNG MỚI**
+
+Mã đơn: #{order['order_code']}
+User ID: `{order['user_id']}`
+Tên: {user.get('first_name', 'Không tên')}
+Sản phẩm: {cat_name}
+Số tiền: **{order['amount']:,}đ**
+Trạng thái: Chờ thanh toán
+        """
+    bot.send_message(ADMIN_ID, text)
 
 # ================== START MENU ==================
 @bot.message_handler(commands=['start'])
@@ -145,14 +172,16 @@ def process_custom_deposit(message):
 
 def create_payment_link(chat_id, user_id, amount):
     order_code = generate_order_code()
-    orders.insert_one({
+    order = {
         "order_code": order_code,
         "user_id": user_id,
         "type": "deposit",
         "amount": amount,
         "status": "pending",
         "created_at": datetime.now()
-    })
+    }
+    orders.insert_one(order)
+    notify_admin(order)
 
     payment_data = CreatePaymentLinkRequest(
         order_code=order_code,
@@ -191,7 +220,7 @@ def handle_buy(call):
         update_balance(call.from_user.id, -price)
 
         order_code = generate_order_code()
-        orders.insert_one({
+        order = {
             "order_code": order_code,
             "user_id": call.from_user.id,
             "category": "canva1slot",
@@ -199,7 +228,9 @@ def handle_buy(call):
             "type": "canva_1slot",
             "status": "waiting_email",
             "created_at": datetime.now()
-        })
+        }
+        orders.insert_one(order)
+        notify_admin(order)
 
         stock_doc = stocks.find_one({"category": "canva1slot"})
         if stock_doc and stock_doc.get("accounts"):
@@ -232,7 +263,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
             bot.send_message(call.message.chat.id, "❌ Sản phẩm tạm hết hàng!")
     else:
         order_code = generate_order_code()
-        orders.insert_one({
+        order = {
             "order_code": order_code,
             "user_id": call.from_user.id,
             "category": code,
@@ -240,7 +271,9 @@ Số dư còn lại: {user['balance'] - price:,}đ
             "type": "purchase",
             "status": "pending",
             "created_at": datetime.now()
-        })
+        }
+        orders.insert_one(order)
+        notify_admin(order)
 
         payment_data = CreatePaymentLinkRequest(
             order_code=order_code,
@@ -260,7 +293,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """)
 
-# ================== UPLOAD FILE TXT - TỰ ĐỘNG DETECT TỪ TÊN FILE ==================
+# ================== UPLOAD FILE TXT ==================
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     if message.from_user.id != ADMIN_ID:
@@ -277,42 +310,30 @@ def handle_document(message):
         # Tự động detect loại từ tên file
         category = None
         for code, info in CATEGORIES.items():
-            if any(kw in file_name for kw in info.get("keywords", [])):
+            if any(kw in file_name for kw in [code, info["name"].lower()]):
                 category = code
                 break
 
-        if not category:
-            # Nếu không detect được, hỏi thủ công
+        if category:
+            added = 0
+            for line in lines:
+                if line:
+                    stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
+                    added += 1
+            bot.reply_to(message, f"✅ Đã tự động thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**")
+        else:
+            # Hỏi thủ công nếu không detect được
             markup = telebot.types.InlineKeyboardMarkup(row_width=2)
             for code, info in CATEGORIES.items():
                 markup.add(telebot.types.InlineKeyboardButton(info["name"], callback_data=f"update_stock_{code}"))
             bot.reply_to(message, "File đã nhận. Chọn loại tài khoản để cập nhật:", reply_markup=markup)
-            # Lưu tạm file
             if not hasattr(bot, 'pending_files'):
                 bot.pending_files = {}
-            bot.pending_files[message.from_user.id] = {"content": lines, "file_name": file_name}
-            return
-
-        # Tự động thêm nếu detect được
-        added = add_accounts_to_stock(category, lines)
-        bot.reply_to(message, f"✅ Đã tự động thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}** từ file {file_name}")
+            bot.pending_files[message.from_user.id] = {"content": lines}
 
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi xử lý file: {str(e)}")
 
-def add_accounts_to_stock(category, lines):
-    added = 0
-    for line in lines:
-        if line:
-            stocks.update_one(
-                {"category": category},
-                {"$push": {"accounts": line}},
-                upsert=True
-            )
-            added += 1
-    return added
-
-# Callback khi không detect được loại
 @bot.callback_query_handler(func=lambda call: call.data.startswith("update_stock_"))
 def update_stock_callback(call):
     bot.answer_callback_query(call.id)
@@ -321,15 +342,55 @@ def update_stock_callback(call):
     if not hasattr(bot, 'pending_files') or call.from_user.id not in bot.pending_files:
         return bot.send_message(call.message.chat.id, "❌ Không tìm thấy file!")
 
-    data = bot.pending_files[call.from_user.id]
-    lines = data["content"]
-    added = add_accounts_to_stock(category, lines)
+    lines = bot.pending_files[call.from_user.id]["content"]
+    added = 0
+    for line in lines:
+        if line:
+            stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
+            added += 1
 
     del bot.pending_files[call.from_user.id]
     bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
                           call.message.chat.id, call.message.message_id)
 
-# ================== ADMIN /giao ==================
+# ================== DUYỆT NẠP TIỀN (ĐÃ SỬA) ==================
+@bot.message_handler(commands=['duyetnap'])
+def admin_duyet_nap(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng được lệnh này!")
+
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            return bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>\nVí dụ: /duyetnap 12345678")
+
+        order_code = int(parts[1])
+        order = orders.find_one({"order_code": order_code, "type": "deposit", "status": "pending"})
+
+        if not order:
+            return bot.reply_to(message, "❌ Không tìm thấy đơn nạp pending với mã này!")
+
+        user_id = order['user_id']
+        amount = order['amount']
+
+        update_balance(user_id, amount)
+        orders.update_one({"order_code": order_code}, {"$set": {"status": "approved", "approved_at": datetime.now()}})
+
+        bot.send_message(user_id, f"""
+✅ **Nạp tiền đã được duyệt!**
+
+Số tiền: +{amount:,}đ
+Số dư hiện tại: {get_user(user_id)['balance']:,}đ
+        """)
+
+        bot.reply_to(message, f"✅ Đã duyệt nạp tiền #{order_code} - Cộng {amount:,}đ cho user {user_id}")
+
+    except ValueError:
+        bot.reply_to(message, "❌ Mã đơn phải là số!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+# ================== /giao ==================
 @bot.message_handler(commands=['giao'])
 def admin_giao(message):
     if message.from_user.id != ADMIN_ID:
@@ -339,7 +400,6 @@ def admin_giao(message):
         order = orders.find_one({"order_code": order_code})
         if not order:
             return bot.reply_to(message, "❌ Không tìm thấy đơn!")
-        # Logic giao (bạn có thể mở rộng)
         bot.reply_to(message, f"✅ Đã xử lý giao đơn #{order_code}")
     except:
         bot.reply_to(message, "Sử dụng: /giao <mã đơn>")
