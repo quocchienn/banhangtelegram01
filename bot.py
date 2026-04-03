@@ -86,7 +86,7 @@ Trạng thái: Chờ thanh toán
     except:
         pass
 
-# ================== ADMIN COMMANDS - ĐẶT Ở ĐẦU TIÊN ==================
+# ================== ADMIN COMMANDS - ĐẶT Ở ĐẦU ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
@@ -336,7 +336,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """)
 
-# ================== XỬ LÝ EMAIL CANVA 1 SLOT (ĐÃ SỬA) ==================
+# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     pending = orders.find_one({
@@ -347,7 +347,7 @@ def handle_user_message(message):
     if pending:
         email = message.text.strip()
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
-            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng (ví dụ: example@gmail.com)")
+            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng.")
         
         bot.send_message(ADMIN_ID, f"""
 📨 **YÊU CẦU THÊM CANVA 1 SLOT**
