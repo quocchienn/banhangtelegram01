@@ -109,7 +109,7 @@ def start(message):
         f"👋 Chào **{message.from_user.first_name}**!\n\nChọn sản phẩm bạn muốn mua:", 
         parse_mode='Markdown', reply_markup=markup)
 
-# ================== CALLBACK HANDLER ==================
+# ================== CALLBACK HANDLER CHUNG ==================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     try:
@@ -145,7 +145,7 @@ def show_wallet(call):
     """
     bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
 
-# ================== NẠP TIỀN (giữ nguyên) ==================
+# ================== NẠP TIỀN ==================
 def deposit_menu(call):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
@@ -225,7 +225,7 @@ def process_custom_deposit(message):
     except Exception as e:
         bot.reply_to(message, f"Lỗi: {str(e)}")
 
-# ================== MUA HÀNG - XỬ LÝ CANVA 1 SLOT ==================
+# ================== MUA HÀNG - CANVA 1 SLOT YÊU CẦU NẠP VÍ TRƯỚC ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
@@ -233,54 +233,56 @@ def handle_buy(call):
     if not info:
         return bot.answer_callback_query(call.id, "Sản phẩm không tồn tại!")
 
-    stock_count = get_stock_count(code)
-
-    if stock_count == 0 and code != "canva1slot":
-        return bot.answer_callback_query(call.id, "❌ Sản phẩm đã hết hàng!", show_alert=True)
-
     user = get_user(call.from_user.id)
     price = info["price"]
 
-    # === CANVA 1 SLOT - Yêu cầu gửi email ===
+    # === CANVA 1 SLOT - Phải nạp ví trước ===
     if code == "canva1slot":
-        if stock_count >= 100:  # Giới hạn tối đa 100 slot
-            order_code = generate_order_code()
-            orders.insert_one({
-                "order_code": order_code,
-                "user_id": call.from_user.id,
-                "category": code,
-                "amount": price,
-                "type": "canva_1slot",
-                "status": "pending",
-                "created_at": datetime.now()
-            })
+        stock_count = get_stock_count(code)
+        if stock_count <= 0:
+            return bot.answer_callback_query(call.id, "❌ Canva 1 Slot đã hết hàng!", show_alert=True)
 
-            payment_data = CreatePaymentLinkRequest(
-                order_code=order_code,
-                amount=price,
-                description=f"Canva 1 Slot",
-                return_url="https://t.me/" + bot.get_me().username,
-                cancel_url="https://t.me/" + bot.get_me().username
-            )
-            payment_link = payos.payment_requests.create(payment_data)
-
+        if user.get("balance", 0) < price:
             bot.send_message(call.from_user.id, f"""
-✅ Đơn hàng #{order_code} đã tạo!
+❌ Số dư ví không đủ để mua Canva 1 Slot.
 
-💰 Số tiền: {price:,}đ
-📦 Sản phẩm: Canva 1 Slot
+Giá: {price:,}đ
+Số dư hiện tại: {user.get('balance', 0):,}đ
 
-🔗 Thanh toán tại: {payment_link.checkout_url}
-
-Sau khi thanh toán thành công, **hãy gửi email Canva** của bạn cho bot.
-Bot sẽ chuyển cho admin để thêm vào slot.
+💳 Vui lòng nạp tiền vào ví trước (tối thiểu 2.000đ).
             """)
-        else:
-            bot.answer_callback_query(call.id, f"❌ Chỉ còn {stock_count} slot Canva 1 Slot!", show_alert=True)
+            bot.answer_callback_query(call.id)
+            return
+
+        # Trừ tiền ví
+        update_balance(call.from_user.id, -price)
+
+        # Tạo đơn chờ gửi email
+        order_code = generate_order_code()
+        orders.insert_one({
+            "order_code": order_code,
+            "user_id": call.from_user.id,
+            "category": code,
+            "amount": price,
+            "type": "canva_1slot",
+            "status": "waiting_email",
+            "created_at": datetime.now()
+        })
+
+        bot.send_message(call.from_user.id, f"""
+✅ **Trừ tiền ví thành công!**
+
+Sản phẩm: Canva 1 Slot
+Số tiền trừ: {price:,}đ
+Số dư còn lại: {user['balance'] - price:,}đ
+
+📧 Vui lòng gửi **email Canva** của bạn cho bot ngay bây giờ.
+Bot sẽ chuyển email cho admin để thêm vào slot.
+        """)
         bot.answer_callback_query(call.id)
         return
 
-    # === Các sản phẩm khác (trừ tiền ví nếu đủ) ===
+    # === Các sản phẩm khác (giữ nguyên logic cũ) ===
     if user.get("balance", 0) >= price:
         update_balance(call.from_user.id, -price)
         stock_doc = stocks.find_one({"category": code})
@@ -329,13 +331,45 @@ Số dư còn lại: {user['balance'] - price:,}đ
 
     bot.answer_callback_query(call.id)
 
-# ================== ADMIN - RESET STOCK CANVA 1 SLOT VỀ 100 ==================
+# ================== XỬ LÝ EMAIL NGƯỜI DÙNG GỬI CHO CANVA 1 SLOT ==================
+@bot.message_handler(func=lambda m: True)
+def handle_user_message(message):
+    pending_order = orders.find_one({
+        "user_id": message.from_user.id,
+        "type": "canva_1slot",
+        "status": "waiting_email"
+    })
+
+    if pending_order:
+        email = message.text.strip()
+        order_code = pending_order['order_code']
+
+        # Chuyển cho Admin
+        admin_msg = f"""
+📨 **YÊU CẦU THÊM CANVA 1 SLOT**
+
+Mã đơn: #{order_code}
+User ID: {message.from_user.id}
+Tên: {message.from_user.first_name or message.from_user.username}
+Email: {email}
+        """
+
+        bot.send_message(ADMIN_ID, admin_msg)
+
+        orders.update_one(
+            {"order_code": order_code},
+            {"$set": {"status": "waiting_admin", "user_email": email}}
+        )
+
+        bot.reply_to(message, "✅ Email đã được gửi cho admin.\nAdmin sẽ thêm vào slot và giao tài khoản sớm nhất.")
+        return
+
+# ================== ADMIN RESET CANVA 1 SLOT VỀ 100 ==================
 @bot.message_handler(commands=['resetcanva1'])
 def admin_reset_canva1slot(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
 
-    # Reset stock Canva 1 Slot về 100 (bằng cách xóa stock cũ và tạo mới placeholder)
     stocks.update_one(
         {"category": "canva1slot"},
         {"$set": {"accounts": ["Slot sẵn sàng"] * 100}},
@@ -345,6 +379,45 @@ def admin_reset_canva1slot(message):
     categories.update_one({"code": "canva1slot"}, {"$set": {"enabled": True}})
 
     bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot** và mở bán lại!")
+
+# ================== ADMIN COMMANDS KHÁC (duyetnap, giao, resetbalance...) ==================
+# (Bạn có thể giữ nguyên các lệnh admin từ code trước)
+
+@bot.message_handler(commands=['giao'])
+def admin_giao_tai_khoan(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
+
+    try:
+        order_code = int(message.text.split()[1])
+        order = orders.find_one({"order_code": order_code, "status": {"$in": ["waiting_admin", "pending"]}})
+
+        if not order:
+            return bot.reply_to(message, "❌ Không tìm thấy đơn chờ xử lý!")
+
+        category = order['category']
+        user_id = order['user_id']
+
+        stock_doc = stocks.find_one({"category": category})
+        if not stock_doc or not stock_doc.get("accounts"):
+            return bot.reply_to(message, "❌ Hết stock loại này!")
+
+        account = stock_doc["accounts"].pop(0)
+        stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
+
+        bot.send_message(user_id, f"""
+🎉 **Tài khoản Canva 1 Slot đã được giao!**
+
+Đơn: #{order_code}
+Tài khoản: {account}
+        """)
+
+        orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}})
+
+        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}")
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
