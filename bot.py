@@ -12,7 +12,6 @@ import time
 
 load_dotenv()
 
-# ================== CẤU HÌNH ==================
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'))
 payos = PayOS(
     client_id=os.getenv('PAYOS_CLIENT_ID'),
@@ -98,13 +97,10 @@ def callback_handler(call):
             handle_buy(call)
         elif data == "outofstock":
             bot.send_message(call.message.chat.id, "❌ Sản phẩm hiện đang hết hàng!")
-        else:
-            bot.send_message(call.message.chat.id, "Chức năng đang cập nhật...")
     except Exception as e:
         print("Lỗi callback:", str(e))
         bot.send_message(call.message.chat.id, "❌ Có lỗi xảy ra!")
 
-# ================== VÍ CỦA TÔI ==================
 def show_wallet(call):
     user = get_user(call.from_user.id)
     joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y %H:%M')
@@ -116,7 +112,7 @@ def show_wallet(call):
     """
     bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
 
-# ================== NẠP TIỀN (ĐÃ SỬA LỖI "custom") ==================
+# ================== NẠP TIỀN (tối thiểu 2k) ==================
 def deposit_menu(call):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
@@ -127,24 +123,23 @@ def deposit_menu(call):
 
 def handle_deposit(call):
     if call.data == "deposit_custom":
-        bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (ví dụ: 50000):")
+        bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (ví dụ: 2000):")
         bot.register_next_step_handler(call.message, process_custom_deposit)
         return
-
     try:
         amount = int(call.data.split("_")[1])
         create_payment_link(call.message.chat.id, call.from_user.id, amount)
     except:
-        bot.send_message(call.message.chat.id, "❌ Có lỗi khi xử lý số tiền.")
+        bot.send_message(call.message.chat.id, "❌ Có lỗi khi xử lý.")
 
 def process_custom_deposit(message):
     try:
         amount = int(message.text.strip())
-        if amount < 10000:
-            return bot.reply_to(message, "Số tiền tối thiểu là 10.000đ!")
+        if amount < 2000:
+            return bot.reply_to(message, "Số tiền tối thiểu là 2.000đ!")
         create_payment_link(message.chat.id, message.from_user.id, amount)
     except ValueError:
-        bot.reply_to(message, "Vui lòng nhập số tiền hợp lệ (chỉ số)!")
+        bot.reply_to(message, "Vui lòng nhập số tiền hợp lệ!")
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
@@ -166,7 +161,6 @@ def create_payment_link(chat_id, user_id, amount):
         return_url="https://t.me/" + bot.get_me().username,
         cancel_url="https://t.me/" + bot.get_me().username
     )
-
     payment_link = payos.payment_requests.create(payment_data)
     bot.send_message(chat_id, 
         f"💰 **Nạp tiền vào ví**\n\n"
@@ -175,7 +169,7 @@ def create_payment_link(chat_id, user_id, amount):
         f"🔗 [Thanh toán ngay]({payment_link.checkout_url})", 
         parse_mode='Markdown')
 
-# ================== MUA HÀNG - CANVA 1 SLOT ==================
+# ================== MUA HÀNG ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
@@ -185,16 +179,15 @@ def handle_buy(call):
 
     user = get_user(call.from_user.id)
     price = info["price"]
+    stock_count = get_stock_count(code)
+
+    if stock_count <= 0:
+        return bot.send_message(call.message.chat.id, "❌ Sản phẩm đã hết hàng!")
 
     if code == "canva1slot":
+        # Logic đặc biệt cho Canva 1 Slot
         if user.get("balance", 0) < price:
-            return bot.send_message(call.message.chat.id, f"""
-❌ Số dư ví không đủ!
-Cần: {price:,}đ
-Hiện có: {user.get('balance', 0):,}đ
-
-Vui lòng nạp tiền vào ví trước.
-            """)
+            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ\nVui lòng nạp tiền trước.")
 
         update_balance(call.from_user.id, -price)
 
@@ -209,7 +202,6 @@ Vui lòng nạp tiền vào ví trước.
             "created_at": datetime.now()
         })
 
-        # Trừ 1 slot
         stock_doc = stocks.find_one({"category": "canva1slot"})
         if stock_doc and stock_doc.get("accounts"):
             stock_doc["accounts"].pop(0)
@@ -218,45 +210,127 @@ Vui lòng nạp tiền vào ví trước.
         bot.send_message(call.message.chat.id, f"""
 ✅ Đã trừ {price:,}đ từ ví!
 
-Số dư còn lại: {user['balance'] - price:,}đ
-
 📧 Vui lòng gửi **email Canva** của bạn ngay bây giờ.
         """)
         return
 
-    bot.send_message(call.message.chat.id, "Sản phẩm này đang được cập nhật.")
+    # === Các sản phẩm khác ===
+    if user.get("balance", 0) >= price:
+        update_balance(call.from_user.id, -price)
+        stock_doc = stocks.find_one({"category": code})
+        if stock_doc and stock_doc.get("accounts"):
+            account = stock_doc["accounts"].pop(0)
+            stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
 
-# ================== XỬ LÝ EMAIL ==================
+            bot.send_message(call.message.chat.id, f"""
+🎉 **Mua thành công từ ví!**
+
+Sản phẩm: {info['name']}
+Tài khoản: {account}
+Số dư còn lại: {user['balance'] - price:,}đ
+            """)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Sản phẩm tạm hết hàng!")
+    else:
+        # Tạo link PayOS
+        order_code = generate_order_code()
+        orders.insert_one({
+            "order_code": order_code,
+            "user_id": call.from_user.id,
+            "category": code,
+            "amount": price,
+            "type": "purchase",
+            "status": "pending",
+            "created_at": datetime.now()
+        })
+
+        payment_data = CreatePaymentLinkRequest(
+            order_code=order_code,
+            amount=price,
+            description=f"Don {order_code}",
+            return_url="https://t.me/" + bot.get_me().username,
+            cancel_url="https://t.me/" + bot.get_me().username
+        )
+        payment_link = payos.payment_requests.create(payment_data)
+
+        bot.send_message(call.message.chat.id, f"""
+✅ Đơn hàng #{order_code} đã tạo!
+
+💰 Số tiền: {price:,}đ
+📦 Sản phẩm: {info['name']}
+
+🔗 [Thanh toán ngay]({payment_link.checkout_url})
+        """)
+
+# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     pending = orders.find_one({"user_id": message.from_user.id, "type": "canva_1slot", "status": "waiting_email"})
     if pending:
         email = message.text.strip()
         bot.send_message(ADMIN_ID, f"""
-📨 CANVA 1 SLOT - CHỜ THÊM
+📨 **CANVA 1 SLOT - CHỜ THÊM**
+
 Mã đơn: #{pending['order_code']}
-User: {message.from_user.id}
+User ID: {message.from_user.id}
 Email: {email}
         """)
         orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
-        bot.reply_to(message, "✅ Email đã gửi cho admin!")
+        bot.reply_to(message, "✅ Email đã được gửi cho admin!")
         return
 
-# ================== ADMIN /giao ==================
+# ================== LỆNH /giao - ÁP DỤNG CHO TẤT CẢ SẢN PHẨM ==================
 @bot.message_handler(commands=['giao'])
 def admin_giao(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng được lệnh này!")
+
     try:
         order_code = int(message.text.split()[1])
         order = orders.find_one({"order_code": order_code})
-        if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn!")
-        bot.reply_to(message, f"✅ Đã xử lý giao đơn #{order_code} (bạn có thể mở rộng logic giao tài khoản ở đây)")
-    except:
-        bot.reply_to(message, "Sử dụng: /giao <mã đơn>")
 
-# ================== FLASK ==================
+        if not order:
+            return bot.reply_to(message, "❌ Không tìm thấy đơn hàng với mã này!")
+
+        if order.get("status") in ["delivered"]:
+            return bot.reply_to(message, "❌ Đơn hàng này đã được giao rồi!")
+
+        category = order.get("category")
+        user_id = order["user_id"]
+
+        stock_doc = stocks.find_one({"category": category})
+        if not stock_doc or not stock_doc.get("accounts"):
+            return bot.reply_to(message, "❌ Hết stock loại này!")
+
+        account = stock_doc["accounts"].pop(0)
+        stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
+
+        # Gửi tài khoản cho người mua
+        bot.send_message(user_id, f"""
+🎉 **Tài khoản đã được giao thủ công!**
+
+Đơn: #{order_code}
+Sản phẩm: {CATEGORIES.get(category, {}).get('name', category)}
+Tài khoản: {account}
+        """)
+
+        # Cập nhật trạng thái đơn
+        orders.update_one({"order_code": order_code}, {
+            "$set": {
+                "status": "delivered", 
+                "delivered_at": datetime.now(), 
+                "account": account
+            }
+        })
+
+        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code} cho user {user_id}")
+
+    except ValueError:
+        bot.reply_to(message, "❌ Sai cú pháp!\nSử dụng: /giao <mã đơn>\nVí dụ: /giao 98765432")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+# ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
