@@ -25,9 +25,9 @@ db = client['ban_taikhoan_pro']
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 
 # Collections
-users = db['users']          # user info + balance
-orders = db['orders']        # đơn hàng (mua & nạp)
-stocks = db['stocks']        # stock tài khoản
+users = db['users']
+orders = db['orders']
+stocks = db['stocks']
 categories = db['categories']
 
 # Categories
@@ -37,7 +37,7 @@ CATEGORIES = {
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000},
 }
 
-# Khởi tạo categories mặc định
+# Khởi tạo categories
 for code, info in CATEGORIES.items():
     categories.update_one(
         {"code": code},
@@ -281,67 +281,63 @@ Cảm ơn bạn!
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
-# ================== ADMIN XÓA SỐ DƯ ==================
-@bot.message_handler(commands=['resetbalance'])
-def admin_reset_balance(message):
+# ================== ADMIN GIAO TÀI KHOẢN THỦ CÔNG ==================
+@bot.message_handler(commands=['giao'])
+def admin_giao_tai_khoan(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
 
     try:
-        user_id = int(message.text.split()[1])
-        user = get_user(user_id)
-        old_balance = user.get('balance', 0)
+        order_code = int(message.text.split()[1])
+        order = orders.find_one({"order_code": order_code, "status": "pending"})
 
-        update_balance(user_id, -old_balance)
+        if not order:
+            return bot.reply_to(message, "❌ Không tìm thấy đơn pending với mã này!")
 
-        bot.reply_to(message, f"✅ Đã reset số dư của user `{user_id}`\nSố dư cũ: {old_balance:,}đ → 0đ")
+        if order['type'] != 'purchase':
+            return bot.reply_to(message, "❌ Đơn này không phải đơn mua tài khoản!")
 
-        try:
-            bot.send_message(user_id, "⚠️ Admin đã reset số dư ví của bạn về 0đ.")
-        except:
-            pass
+        category = order['category']
+        user_id = order['user_id']
+
+        stock_doc = stocks.find_one({"category": category})
+        if not stock_doc or not stock_doc.get("accounts"):
+            return bot.reply_to(message, f"❌ Hết stock {CATEGORIES[category]['name']}!")
+
+        # Lấy và xóa 1 tài khoản khỏi stock
+        account = stock_doc["accounts"].pop(0)
+        stocks.update_one(
+            {"category": category},
+            {"$set": {"accounts": stock_doc["accounts"]}}
+        )
+
+        # Giao tài khoản cho user
+        buyer_text = f"""
+🎉 **Tài khoản đã được giao thủ công!**
+
+Đơn: #{order_code}
+Sản phẩm: {CATEGORIES[category]['name']}
+Tài khoản:
+{account}
+
+Cảm ơn bạn đã mua hàng! ❤️
+        """
+        bot.send_message(user_id, buyer_text)
+
+        # Cập nhật trạng thái đơn hàng
+        orders.update_one(
+            {"order_code": order_code},
+            {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}}
+        )
+
+        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}\nTài khoản: {account}")
 
     except (IndexError, ValueError):
-        bot.reply_to(message, "Sử dụng: /resetbalance <user_id>\nVí dụ: /resetbalance 5589888565")
+        bot.reply_to(message, "Sử dụng: /giao <mã đơn>\nVí dụ: /giao 12345678")
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
-
-@bot.message_handler(commands=['resetallbalance'])
-def admin_reset_all_balance(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
-
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận reset tất cả", callback_data="confirm_reset_all"))
-    markup.add(telebot.types.InlineKeyboardButton("❌ Hủy", callback_data="cancel_reset_all"))
-
-    bot.reply_to(message, 
-        "⚠️ **CẢNH BÁO**\n\n"
-        "Bạn sắp reset số dư về 0 cho **TẤT CẢ** người dùng.\n"
-        "Hành động này không thể hoàn tác.\n\n"
-        "Bạn có chắc chắn muốn thực hiện?", 
-        reply_markup=markup)
-
-
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_reset_all", "cancel_reset_all"])
-def handle_reset_all_confirm(call):
-    if call.from_user.id != ADMIN_ID:
-        return bot.answer_callback_query(call.id, "Không có quyền!", show_alert=True)
-
-    if call.data == "cancel_reset_all":
-        bot.answer_callback_query(call.id, "Đã hủy.")
-        bot.edit_message_text("Đã hủy reset tất cả số dư.", call.message.chat.id, call.message.message_id)
-        return
-
-    result = users.update_many({}, {"$set": {"balance": 0}})
-    count = result.modified_count
-
-    bot.answer_callback_query(call.id, f"Đã reset {count} user!", show_alert=True)
-    bot.edit_message_text(f"✅ Đã reset số dư về 0 cho **{count}** người dùng.", 
-                          call.message.chat.id, call.message.message_id)
-
-# ================== MUA HÀNG (TRỪ TIỀN VÍ NẾU ĐỦ) ==================
+# ================== MUA HÀNG TỰ ĐỘNG (TRỪ VÍ NẾU ĐỦ) ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     category = call.data.split("_")[1]
@@ -353,6 +349,7 @@ def handle_buy(call):
     price = info["price"]
 
     if user.get("balance", 0) >= price:
+        # Trừ tiền ví và giao ngay
         update_balance(call.from_user.id, -price)
 
         stock_doc = stocks.find_one({"category": category})
@@ -370,6 +367,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
         else:
             bot.send_message(call.from_user.id, "❌ Sản phẩm tạm hết hàng!")
     else:
+        # Tạo link PayOS
         order_code = generate_order_code()
         orders.insert_one({
             "order_code": order_code,
