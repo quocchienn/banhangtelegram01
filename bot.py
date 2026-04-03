@@ -30,7 +30,6 @@ categories = db['categories']
 
 CATEGORIES = {
     "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
-    "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal"},
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000, "type": "normal"},
     "canva1slot": {"name": "Canva 1 Slot", "price": 2000, "type": "canva_1slot"},
     "canva100slot": {"name": "Canva 100 Slot", "price": 30000, "type": "normal"},
