@@ -185,9 +185,8 @@ def handle_buy(call):
         return bot.send_message(call.message.chat.id, "❌ Sản phẩm đã hết hàng!")
 
     if code == "canva1slot":
-        # Logic đặc biệt cho Canva 1 Slot
         if user.get("balance", 0) < price:
-            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ\nVui lòng nạp tiền trước.")
+            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ\nVui lòng nạp trước.")
 
         update_balance(call.from_user.id, -price)
 
@@ -202,6 +201,7 @@ def handle_buy(call):
             "created_at": datetime.now()
         })
 
+        # Trừ stock
         stock_doc = stocks.find_one({"category": "canva1slot"})
         if stock_doc and stock_doc.get("accounts"):
             stock_doc["accounts"].pop(0)
@@ -210,11 +210,11 @@ def handle_buy(call):
         bot.send_message(call.message.chat.id, f"""
 ✅ Đã trừ {price:,}đ từ ví!
 
-📧 Vui lòng gửi **email Canva** của bạn ngay bây giờ.
+📧 Vui lòng gửi **email Canva** của bạn ngay.
         """)
         return
 
-    # === Các sản phẩm khác ===
+    # Các sản phẩm khác
     if user.get("balance", 0) >= price:
         update_balance(call.from_user.id, -price)
         stock_doc = stocks.find_one({"category": code})
@@ -232,7 +232,6 @@ Số dư còn lại: {user['balance'] - price:,}đ
         else:
             bot.send_message(call.message.chat.id, "❌ Sản phẩm tạm hết hàng!")
     else:
-        # Tạo link PayOS
         order_code = generate_order_code()
         orders.insert_one({
             "order_code": order_code,
@@ -262,73 +261,101 @@ Số dư còn lại: {user['balance'] - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """)
 
-# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
-@bot.message_handler(func=lambda m: True)
-def handle_user_message(message):
-    pending = orders.find_one({"user_id": message.from_user.id, "type": "canva_1slot", "status": "waiting_email"})
-    if pending:
-        email = message.text.strip()
-        bot.send_message(ADMIN_ID, f"""
-📨 **CANVA 1 SLOT - CHỜ THÊM**
+# ================== UPLOAD FILE TXT ĐỂ UPDATE STOCK (KHÔI PHỤC) ==================
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới được upload file!")
 
-Mã đơn: #{pending['order_code']}
-User ID: {message.from_user.id}
-Email: {email}
-        """)
-        orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
-        bot.reply_to(message, "✅ Email đã được gửi cho admin!")
-        return
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        content = downloaded_file.decode('utf-8')
 
-# ================== LỆNH /giao - ÁP DỤNG CHO TẤT CẢ SẢN PHẨM ==================
+        lines = content.strip().split('\n')
+        added = 0
+        category = None
+
+        # Hỗ trợ chọn loại khi upload (bạn có thể cải tiến sau)
+        bot.reply_to(message, "File đã nhận. Chọn loại tài khoản để cập nhật:", 
+                     reply_markup=telebot.types.InlineKeyboardMarkup().add(
+                         *[telebot.types.InlineKeyboardButton(info['name'], callback_data=f"update_stock_{code}") 
+                           for code, info in CATEGORIES.items()]
+                     ))
+
+        # Lưu tạm nội dung file vào session (sử dụng dict đơn giản)
+        if not hasattr(bot, 'pending_files'):
+            bot.pending_files = {}
+        bot.pending_files[message.from_user.id] = {"content": lines, "lines": len(lines)}
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi xử lý file: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("update_stock_"))
+def update_stock_callback(call):
+    bot.answer_callback_query(call.id)
+    category = call.data.split("_")[2]
+
+    if call.from_user.id not in bot.pending_files:
+        return bot.send_message(call.message.chat.id, "❌ Không tìm thấy file!")
+
+    data = bot.pending_files[call.from_user.id]
+    lines = data["content"]
+    added = 0
+
+    for line in lines:
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        try:
+            parts = line.split("|")
+            account_str = "|".join(parts)
+            stocks.update_one(
+                {"category": category},
+                {"$push": {"accounts": account_str}},
+                upsert=True
+            )
+            added += 1
+        except:
+            continue
+
+    del bot.pending_files[call.from_user.id]
+    bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
+                          call.message.chat.id, call.message.message_id)
+
+# ================== ADMIN /giao ==================
 @bot.message_handler(commands=['giao'])
 def admin_giao(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được lệnh này!")
-
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
     try:
         order_code = int(message.text.split()[1])
         order = orders.find_one({"order_code": order_code})
-
         if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn hàng với mã này!")
-
-        if order.get("status") in ["delivered"]:
-            return bot.reply_to(message, "❌ Đơn hàng này đã được giao rồi!")
-
+            return bot.reply_to(message, "❌ Không tìm thấy đơn!")
+        
         category = order.get("category")
         user_id = order["user_id"]
 
         stock_doc = stocks.find_one({"category": category})
         if not stock_doc or not stock_doc.get("accounts"):
-            return bot.reply_to(message, "❌ Hết stock loại này!")
+            return bot.reply_to(message, "❌ Hết stock!")
 
         account = stock_doc["accounts"].pop(0)
         stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
 
-        # Gửi tài khoản cho người mua
         bot.send_message(user_id, f"""
-🎉 **Tài khoản đã được giao thủ công!**
+🎉 **Tài khoản đã được giao!**
 
 Đơn: #{order_code}
 Sản phẩm: {CATEGORIES.get(category, {}).get('name', category)}
 Tài khoản: {account}
         """)
 
-        # Cập nhật trạng thái đơn
-        orders.update_one({"order_code": order_code}, {
-            "$set": {
-                "status": "delivered", 
-                "delivered_at": datetime.now(), 
-                "account": account
-            }
-        })
-
-        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code} cho user {user_id}")
-
-    except ValueError:
-        bot.reply_to(message, "❌ Sai cú pháp!\nSử dụng: /giao <mã đơn>\nVí dụ: /giao 98765432")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+        orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}})
+        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}")
+    except:
+        bot.reply_to(message, "Sử dụng: /giao <mã đơn>")
 
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
