@@ -63,30 +63,15 @@ def notify_admin(order):
     user = get_user(order["user_id"])
     cat_name = CATEGORIES.get(order.get("category"), {}).get("name", "Nạp tiền")
     if order["type"] == "deposit":
-        text = f"""
-💰 **ĐƠN NẠP TIỀN MỚI**
-Mã đơn: #{order['order_code']}
-User ID: `{order['user_id']}`
-Tên: {user.get('first_name', 'Không tên')}
-Số tiền: **{order['amount']:,}đ**
-Trạng thái: Chờ thanh toán
-        """
+        text = f"💰 **ĐƠN NẠP TIỀN MỚI**\nMã đơn: #{order['order_code']}\nUser ID: `{order['user_id']}`\nTên: {user.get('first_name', 'Không tên')}\nSố tiền: **{order['amount']:,}đ**\nTrạng thái: Chờ thanh toán"
     else:
-        text = f"""
-🛒 **ĐƠN MUA HÀNG MỚI**
-Mã đơn: #{order['order_code']}
-User ID: `{order['user_id']}`
-Tên: {user.get('first_name', 'Không tên')}
-Sản phẩm: {cat_name}
-Số tiền: **{order['amount']:,}đ**
-Trạng thái: Chờ thanh toán
-        """
+        text = f"🛒 **ĐƠN MUA HÀNG MỚI**\nMã đơn: #{order['order_code']}\nUser ID: `{order['user_id']}`\nTên: {user.get('first_name', 'Không tên')}\nSản phẩm: {cat_name}\nSố tiền: **{order['amount']:,}đ**\nTrạng thái: Chờ thanh toán"
     try:
         bot.send_message(ADMIN_ID, text)
     except:
         pass
 
-# ================== START MENU ==================
+# ================== START ==================
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -302,13 +287,11 @@ def handle_user_message(message):
         "type": "canva_1slot",
         "status": "waiting_email"
     })
-
     if pending:
         email = message.text.strip()
-
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
-            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng (ví dụ: example@gmail.com)")
-
+            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng.")
+        
         bot.send_message(ADMIN_ID, f"""
 📨 **YÊU CẦU THÊM CANVA 1 SLOT**
 
@@ -319,11 +302,10 @@ Email: `{email}`
         """)
 
         orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
-
-        bot.reply_to(message, "✅ Email @gmail.com đã được gửi cho admin.\nAdmin sẽ thêm vào slot và giao tài khoản sớm nhất!")
+        bot.reply_to(message, "✅ Email đã được gửi cho admin!")
         return
 
-# ================== ADMIN COMMANDS (ĐÃ SỬA ĐẦY ĐỦ) ==================
+# ================== ADMIN COMMANDS (ĐÃ SẮP XẾP ĐÚNG THỨ TỰ) ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
@@ -362,17 +344,13 @@ def admin_giao(message):
         order = orders.find_one({"order_code": order_code})
         if not order:
             return bot.reply_to(message, "❌ Không tìm thấy đơn!")
-
         category = order.get("category")
         user_id = order["user_id"]
-
         stock_doc = stocks.find_one({"category": category})
         if not stock_doc or not stock_doc.get("accounts"):
             return bot.reply_to(message, "❌ Hết stock loại này!")
-
         account = stock_doc["accounts"].pop(0)
         stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
-
         bot.send_message(user_id, f"""
 🎉 **Tài khoản đã được giao!**
 
@@ -380,7 +358,6 @@ def admin_giao(message):
 Sản phẩm: {CATEGORIES.get(category, {}).get('name', category)}
 Tài khoản: {account}
         """)
-
         orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}})
         bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}")
     except Exception as e:
@@ -427,6 +404,61 @@ def admin_reset_canva1(message):
         upsert=True
     )
     bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot** và mở bán lại!")
+
+# ================== UPLOAD FILE TXT ==================
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới được upload file!")
+
+    try:
+        file_name = (message.document.file_name or "").lower()
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        content = downloaded_file.decode('utf-8')
+
+        lines = [line.strip() for line in content.split('\n') if line.strip()]
+
+        category = None
+        for code, info in CATEGORIES.items():
+            if any(kw in file_name for kw in [code.lower(), info["name"].lower()]):
+                category = code
+                break
+
+        if category:
+            added = 0
+            for line in lines:
+                if line:
+                    stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
+                    added += 1
+            bot.reply_to(message, f"✅ Đã tự động thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**")
+        else:
+            markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+            for code, info in CATEGORIES.items():
+                markup.add(telebot.types.InlineKeyboardButton(info["name"], callback_data=f"update_stock_{code}"))
+            bot.reply_to(message, "File đã nhận. Chọn loại tài khoản để cập nhật:", reply_markup=markup)
+            if not hasattr(bot, 'pending_files'):
+                bot.pending_files = {}
+            bot.pending_files[message.from_user.id] = {"content": lines}
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi xử lý file: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("update_stock_"))
+def update_stock_callback(call):
+    bot.answer_callback_query(call.id)
+    category = call.data.split("_")[2]
+    if not hasattr(bot, 'pending_files') or call.from_user.id not in bot.pending_files:
+        return bot.send_message(call.message.chat.id, "❌ Không tìm thấy file!")
+    lines = bot.pending_files[call.from_user.id]["content"]
+    added = 0
+    for line in lines:
+        if line:
+            stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
+            added += 1
+    del bot.pending_files[call.from_user.id]
+    bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
+                          call.message.chat.id, call.message.message_id)
 
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
