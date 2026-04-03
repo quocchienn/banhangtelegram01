@@ -30,6 +30,7 @@ categories = db['categories']
 
 CATEGORIES = {
     "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
+    "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal"},
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000, "type": "normal"},
     "canva1slot": {"name": "Canva 1 Slot", "price": 2000, "type": "canva_1slot"},
     "canva100slot": {"name": "Canva 100 Slot", "price": 30000, "type": "normal"},
@@ -242,7 +243,8 @@ def handle_buy(call):
         bot.send_message(call.message.chat.id, f"""
 ✅ Đã trừ {price:,}đ từ ví!
 
-📧 Vui lòng gửi **email Canva** của bạn ngay.
+📧 Vui lòng gửi **email Canva** của bạn ngay bây giờ.
+Bot sẽ chuyển cho admin để thêm vào slot.
         """)
         return
 
@@ -295,96 +297,41 @@ Số dư còn lại: {user['balance'] - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """)
 
-# ================== UPLOAD FILE TXT (ĐÃ SỬA LỖI NoneType.strip) ==================
-@bot.message_handler(content_types=['document'])
-def handle_document(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới được upload file!")
+# ================== XỬ LÝ EMAIL CANVA 1 SLOT (ĐÃ SỬA) ==================
+@bot.message_handler(func=lambda m: True)
+def handle_user_message(message):
+    # Kiểm tra xem có đơn Canva 1 Slot đang chờ email không
+    pending = orders.find_one({
+        "user_id": message.from_user.id,
+        "type": "canva_1slot",
+        "status": "waiting_email"
+    })
 
-    try:
-        file_name = message.document.file_name.lower() if message.document.file_name else ""
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        content = downloaded_file.decode('utf-8')
+    if pending:
+        email = message.text.strip()
+        if not email:
+            return bot.reply_to(message, "Vui lòng gửi email hợp lệ!")
 
-        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        # Gửi cho Admin
+        bot.send_message(ADMIN_ID, f"""
+📨 **YÊU CẦU THÊM CANVA 1 SLOT**
 
-        # Tự động detect loại từ tên file
-        category = None
-        for code, info in CATEGORIES.items():
-            if any(kw in file_name for kw in [code.lower(), info["name"].lower()]):
-                category = code
-                break
+Mã đơn: #{pending['order_code']}
+User ID: `{message.from_user.id}`
+Tên: {message.from_user.first_name or 'Không tên'}
+Email: `{email}`
+        """)
 
-        if category:
-            added = 0
-            for line in lines:
-                if line:
-                    stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
-                    added += 1
-            bot.reply_to(message, f"✅ Đã tự động thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}** từ file {file_name}")
-        else:
-            # Hỏi thủ công
-            markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-            for code, info in CATEGORIES.items():
-                markup.add(telebot.types.InlineKeyboardButton(info["name"], callback_data=f"update_stock_{code}"))
-            bot.reply_to(message, "File đã nhận. Chọn loại tài khoản để cập nhật:", reply_markup=markup)
-            if not hasattr(bot, 'pending_files'):
-                bot.pending_files = {}
-            bot.pending_files[message.from_user.id] = {"content": lines}
+        # Cập nhật trạng thái
+        orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
 
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi xử lý file: {str(e)}")
+        bot.reply_to(message, "✅ Email của bạn đã được gửi cho admin.\nAdmin sẽ thêm vào slot và giao tài khoản sớm nhất!")
+        return
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("update_stock_"))
-def update_stock_callback(call):
-    bot.answer_callback_query(call.id)
-    category = call.data.split("_")[2]
+    # Nếu không phải trường hợp Canva 1 Slot thì bỏ qua
+    pass
 
-    if not hasattr(bot, 'pending_files') or call.from_user.id not in bot.pending_files:
-        return bot.send_message(call.message.chat.id, "❌ Không tìm thấy file!")
-
-    lines = bot.pending_files[call.from_user.id]["content"]
-    added = 0
-    for line in lines:
-        if line:
-            stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
-            added += 1
-
-    del bot.pending_files[call.from_user.id]
-    bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
-                          call.message.chat.id, call.message.message_id)
-
-# ================== ADMIN COMMANDS (ĐÃ SỬA ĐẦY ĐỦ) ==================
-@bot.message_handler(commands=['users', 'balance'])
-def admin_view_balances(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    all_users = users.find().sort("balance", -1)
-    text = "📊 **DANH SÁCH SỐ DƯ USER**\n\n"
-    for u in all_users:
-        name = u.get('first_name') or u.get('username') or 'Unknown'
-        text += f"👤 {name} (ID: `{u['user_id']}`) → 💰 `{u.get('balance', 0):,}đ`\n"
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['duyetnap'])
-def admin_duyet_nap(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    try:
-        order_code = int(message.text.split()[1])
-        order = orders.find_one({"order_code": order_code, "type": "deposit", "status": "pending"})
-        if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn nạp pending!")
-        user_id = order['user_id']
-        amount = order['amount']
-        update_balance(user_id, amount)
-        orders.update_one({"order_code": order_code}, {"$set": {"status": "approved", "approved_at": datetime.now()}})
-        bot.send_message(user_id, f"✅ Nạp tiền đã được duyệt!\nSố tiền: +{amount:,}đ\nSố dư hiện tại: {get_user(user_id)['balance']:,}đ")
-        bot.reply_to(message, f"✅ Đã duyệt nạp tiền #{order_code} - Cộng {amount:,}đ cho user {user_id}")
-    except:
-        bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>")
-
+# ================== ADMIN /giao ==================
 @bot.message_handler(commands=['giao'])
 def admin_giao(message):
     if message.from_user.id != ADMIN_ID:
@@ -394,51 +341,29 @@ def admin_giao(message):
         order = orders.find_one({"order_code": order_code})
         if not order:
             return bot.reply_to(message, "❌ Không tìm thấy đơn!")
-        bot.reply_to(message, f"✅ Đã xử lý giao đơn #{order_code}")
-    except:
-        bot.reply_to(message, "Sử dụng: /giao <mã đơn>")
+        
+        category = order.get("category")
+        user_id = order["user_id"]
 
-@bot.message_handler(commands=['resetbalance'])
-def admin_reset_balance(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    try:
-        user_id = int(message.text.split()[1])
-        old = get_user(user_id)['balance']
-        update_balance(user_id, -old)
-        bot.reply_to(message, f"✅ Đã reset số dư user `{user_id}` từ {old:,}đ → 0đ")
-    except:
-        bot.reply_to(message, "Sử dụng: /resetbalance <user_id>")
+        stock_doc = stocks.find_one({"category": category})
+        if not stock_doc or not stock_doc.get("accounts"):
+            return bot.reply_to(message, "❌ Hết stock loại này!")
 
-@bot.message_handler(commands=['resetallbalance'])
-def admin_reset_all_balance(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận reset tất cả", callback_data="confirm_reset_all"))
-    markup.add(telebot.types.InlineKeyboardButton("❌ Hủy", callback_data="cancel_reset_all"))
-    bot.reply_to(message, "⚠️ Bạn sắp reset số dư về 0 cho **TẤT CẢ** user. Xác nhận?", reply_markup=markup)
+        account = stock_doc["accounts"].pop(0)
+        stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
 
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_reset_all", "cancel_reset_all"])
-def handle_reset_all(call):
-    if call.from_user.id != ADMIN_ID:
-        return
-    if call.data == "cancel_reset_all":
-        bot.edit_message_text("Đã hủy.", call.message.chat.id, call.message.message_id)
-        return
-    users.update_many({}, {"$set": {"balance": 0}})
-    bot.edit_message_text("✅ Đã reset số dư về 0 cho tất cả user.", call.message.chat.id, call.message.message_id)
+        bot.send_message(user_id, f"""
+🎉 **Tài khoản đã được giao!**
 
-@bot.message_handler(commands=['resetcanva1'])
-def admin_reset_canva1(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    stocks.update_one(
-        {"category": "canva1slot"},
-        {"$set": {"accounts": ["Slot sẵn sàng"] * 100}},
-        upsert=True
-    )
-    bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot** và mở bán lại!")
+Đơn: #{order_code}
+Sản phẩm: {CATEGORIES.get(category, {}).get('name', category)}
+Tài khoản: {account}
+        """)
+
+        orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}})
+        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}\nSử dụng: /giao <mã đơn>")
 
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
