@@ -86,7 +86,7 @@ Trạng thái: Chờ thanh toán
     except:
         pass
 
-# ================== ADMIN COMMANDS - ĐẶT Ở ĐẦU (RẤT QUAN TRỌNG) ==================
+# ================== ADMIN COMMANDS - ĐẶT Ở ĐẦU TIÊN ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
@@ -241,9 +241,7 @@ def update_stock_callback(call):
     bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
                           call.message.chat.id, call.message.message_id)
 
-# ================== MUA HÀNG & NẠP TIỀN (giữ nguyên) ==================
-# (Phần này giữ nguyên như code trước, tôi rút gọn để code ngắn)
-
+# ================== MUA HÀNG ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
@@ -285,11 +283,11 @@ def handle_buy(call):
         bot.send_message(call.message.chat.id, f"""
 ✅ Đã trừ {price:,}đ từ ví!
 
-📧 Vui lòng gửi **email Canva (@gmail.com)** của bạn ngay.
+📧 Vui lòng gửi **email Canva (@gmail.com)** của bạn ngay bây giờ.
         """)
         return
 
-    # Các sản phẩm khác (giữ nguyên)
+    # Các sản phẩm khác
     if user.get("balance", 0) >= price:
         update_balance(call.from_user.id, -price)
         stock_doc = stocks.find_one({"category": code})
@@ -338,7 +336,7 @@ Số dư còn lại: {user['balance'] - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """)
 
-# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
+# ================== XỬ LÝ EMAIL CANVA 1 SLOT (ĐÃ SỬA) ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     pending = orders.find_one({
@@ -349,7 +347,7 @@ def handle_user_message(message):
     if pending:
         email = message.text.strip()
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
-            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng.")
+            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng (ví dụ: example@gmail.com)")
         
         bot.send_message(ADMIN_ID, f"""
 📨 **YÊU CẦU THÊM CANVA 1 SLOT**
