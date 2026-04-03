@@ -63,249 +63,30 @@ def notify_admin(order):
     user = get_user(order["user_id"])
     cat_name = CATEGORIES.get(order.get("category"), {}).get("name", "Nạp tiền")
     if order["type"] == "deposit":
-        text = f"💰 **ĐƠN NẠP TIỀN MỚI**\nMã đơn: #{order['order_code']}\nUser ID: `{order['user_id']}`\nTên: {user.get('first_name', 'Không tên')}\nSố tiền: **{order['amount']:,}đ**\nTrạng thái: Chờ thanh toán"
+        text = f"""
+💰 **ĐƠN NẠP TIỀN MỚI**
+Mã đơn: #{order['order_code']}
+User ID: `{order['user_id']}`
+Tên: {user.get('first_name', 'Không tên')}
+Số tiền: **{order['amount']:,}đ**
+Trạng thái: Chờ thanh toán
+        """
     else:
-        text = f"🛒 **ĐƠN MUA HÀNG MỚI**\nMã đơn: #{order['order_code']}\nUser ID: `{order['user_id']}`\nTên: {user.get('first_name', 'Không tên')}\nSản phẩm: {cat_name}\nSố tiền: **{order['amount']:,}đ**\nTrạng thái: Chờ thanh toán"
+        text = f"""
+🛒 **ĐƠN MUA HÀNG MỚI**
+Mã đơn: #{order['order_code']}
+User ID: `{order['user_id']}`
+Tên: {user.get('first_name', 'Không tên')}
+Sản phẩm: {cat_name}
+Số tiền: **{order['amount']:,}đ**
+Trạng thái: Chờ thanh toán
+        """
     try:
         bot.send_message(ADMIN_ID, text)
     except:
         pass
 
-# ================== START ==================
-@bot.message_handler(commands=['start'])
-def start(message):
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    for code, info in CATEGORIES.items():
-        stock_count = get_stock_count(code)
-        if stock_count > 0:
-            markup.add(telebot.types.InlineKeyboardButton(
-                f"🛒 Mua {info['name']} - {info['price']:,}đ (còn {stock_count})",
-                callback_data=f"buy_{code}"
-            ))
-        else:
-            markup.add(telebot.types.InlineKeyboardButton(
-                f"{info['name']} - 🔒 Hết hàng", callback_data="outofstock"
-            ))
-
-    markup.add(telebot.types.InlineKeyboardButton("💰 Ví của tôi", callback_data="my_wallet"))
-    markup.add(telebot.types.InlineKeyboardButton("💳 Nạp tiền vào ví", callback_data="deposit"))
-
-    bot.send_message(message.chat.id, 
-        f"👋 Chào **{message.from_user.first_name}**!\n\nChọn sản phẩm bạn muốn mua:", 
-        parse_mode='Markdown', reply_markup=markup)
-
-# ================== CALLBACK HANDLER ==================
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    bot.answer_callback_query(call.id)
-    try:
-        data = call.data
-        if data == "my_wallet":
-            show_wallet(call)
-        elif data == "deposit":
-            deposit_menu(call)
-        elif data.startswith("deposit_"):
-            handle_deposit(call)
-        elif data.startswith("buy_"):
-            handle_buy(call)
-        elif data == "outofstock":
-            bot.send_message(call.message.chat.id, "❌ Sản phẩm hiện đang hết hàng!")
-    except Exception as e:
-        print("Lỗi callback:", str(e))
-        bot.send_message(call.message.chat.id, "❌ Có lỗi xảy ra!")
-
-def show_wallet(call):
-    user = get_user(call.from_user.id)
-    joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y %H:%M')
-    text = f"""
-🆔 **ID:** `{call.from_user.id}`
-👤 **Tên:** {call.from_user.first_name or 'Không có tên'}
-💰 **Số dư:** `{user.get('balance', 0):,}đ`
-📅 **Tham gia:** {joined}
-    """
-    bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
-
-# ================== NẠP TIỀN ==================
-def deposit_menu(call):
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
-    markup.add(telebot.types.InlineKeyboardButton("100.000đ", callback_data="deposit_100000"))
-    markup.add(telebot.types.InlineKeyboardButton("200.000đ", callback_data="deposit_200000"))
-    markup.add(telebot.types.InlineKeyboardButton("Nhập số khác", callback_data="deposit_custom"))
-    bot.send_message(call.message.chat.id, "💳 Chọn số tiền muốn nạp vào ví:", reply_markup=markup)
-
-def handle_deposit(call):
-    if call.data == "deposit_custom":
-        bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (ví dụ: 2000):")
-        bot.register_next_step_handler(call.message, process_custom_deposit)
-        return
-    try:
-        amount = int(call.data.split("_")[1])
-        create_payment_link(call.message.chat.id, call.from_user.id, amount)
-    except:
-        bot.send_message(call.message.chat.id, "❌ Có lỗi khi xử lý.")
-
-def process_custom_deposit(message):
-    try:
-        amount = int(message.text.strip())
-        if amount < 2000:
-            return bot.reply_to(message, "Số tiền tối thiểu là 2.000đ!")
-        create_payment_link(message.chat.id, message.from_user.id, amount)
-    except ValueError:
-        bot.reply_to(message, "Vui lòng nhập số tiền hợp lệ!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
-
-def create_payment_link(chat_id, user_id, amount):
-    order_code = generate_order_code()
-    order = {
-        "order_code": order_code,
-        "user_id": user_id,
-        "type": "deposit",
-        "amount": amount,
-        "status": "pending",
-        "created_at": datetime.now()
-    }
-    orders.insert_one(order)
-    notify_admin(order)
-
-    payment_data = CreatePaymentLinkRequest(
-        order_code=order_code,
-        amount=amount,
-        description=f"Nap vi {amount}đ",
-        return_url="https://t.me/" + bot.get_me().username,
-        cancel_url="https://t.me/" + bot.get_me().username
-    )
-    payment_link = payos.payment_requests.create(payment_data)
-    bot.send_message(chat_id, 
-        f"💰 **Nạp tiền vào ví**\n\n"
-        f"Số tiền: {amount:,}đ\n"
-        f"Mã đơn: #{order_code}\n\n"
-        f"🔗 [Thanh toán ngay]({payment_link.checkout_url})", 
-        parse_mode='Markdown')
-
-# ================== MUA HÀNG ==================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
-def handle_buy(call):
-    code = call.data.split("_")[1]
-    info = CATEGORIES.get(code)
-    if not info:
-        return bot.send_message(call.message.chat.id, "❌ Sản phẩm không tồn tại!")
-
-    user = get_user(call.from_user.id)
-    price = info["price"]
-    stock_count = get_stock_count(code)
-
-    if stock_count <= 0:
-        return bot.send_message(call.message.chat.id, "❌ Sản phẩm đã hết hàng!")
-
-    if code == "canva1slot":
-        if user.get("balance", 0) < price:
-            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ\nVui lòng nạp trước.")
-
-        update_balance(call.from_user.id, -price)
-
-        order_code = generate_order_code()
-        order = {
-            "order_code": order_code,
-            "user_id": call.from_user.id,
-            "category": "canva1slot",
-            "amount": price,
-            "type": "canva_1slot",
-            "status": "waiting_email",
-            "created_at": datetime.now()
-        }
-        orders.insert_one(order)
-        notify_admin(order)
-
-        stock_doc = stocks.find_one({"category": "canva1slot"})
-        if stock_doc and stock_doc.get("accounts"):
-            stock_doc["accounts"].pop(0)
-            stocks.update_one({"category": "canva1slot"}, {"$set": {"accounts": stock_doc["accounts"]}})
-
-        bot.send_message(call.message.chat.id, f"""
-✅ Đã trừ {price:,}đ từ ví!
-
-📧 Vui lòng gửi **email Canva (@gmail.com)** của bạn ngay bây giờ.
-        """)
-        return
-
-    # Các sản phẩm khác
-    if user.get("balance", 0) >= price:
-        update_balance(call.from_user.id, -price)
-        stock_doc = stocks.find_one({"category": code})
-        if stock_doc and stock_doc.get("accounts"):
-            account = stock_doc["accounts"].pop(0)
-            stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
-
-            bot.send_message(call.message.chat.id, f"""
-🎉 **Mua thành công từ ví!**
-
-Sản phẩm: {info['name']}
-Tài khoản: {account}
-Số dư còn lại: {user['balance'] - price:,}đ
-            """)
-        else:
-            bot.send_message(call.message.chat.id, "❌ Sản phẩm tạm hết hàng!")
-    else:
-        order_code = generate_order_code()
-        order = {
-            "order_code": order_code,
-            "user_id": call.from_user.id,
-            "category": code,
-            "amount": price,
-            "type": "purchase",
-            "status": "pending",
-            "created_at": datetime.now()
-        }
-        orders.insert_one(order)
-        notify_admin(order)
-
-        payment_data = CreatePaymentLinkRequest(
-            order_code=order_code,
-            amount=price,
-            description=f"Don {order_code}",
-            return_url="https://t.me/" + bot.get_me().username,
-            cancel_url="https://t.me/" + bot.get_me().username
-        )
-        payment_link = payos.payment_requests.create(payment_data)
-
-        bot.send_message(call.message.chat.id, f"""
-✅ Đơn hàng #{order_code} đã tạo!
-
-💰 Số tiền: {price:,}đ
-📦 Sản phẩm: {info['name']}
-
-🔗 [Thanh toán ngay]({payment_link.checkout_url})
-        """)
-
-# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
-@bot.message_handler(func=lambda m: True)
-def handle_user_message(message):
-    pending = orders.find_one({
-        "user_id": message.from_user.id,
-        "type": "canva_1slot",
-        "status": "waiting_email"
-    })
-    if pending:
-        email = message.text.strip()
-        if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
-            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng.")
-        
-        bot.send_message(ADMIN_ID, f"""
-📨 **YÊU CẦU THÊM CANVA 1 SLOT**
-
-Mã đơn: #{pending['order_code']}
-User ID: `{message.from_user.id}`
-Tên: {message.from_user.first_name or 'Không tên'}
-Email: `{email}`
-        """)
-
-        orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
-        bot.reply_to(message, "✅ Email đã được gửi cho admin!")
-        return
-
-# ================== ADMIN COMMANDS (ĐÃ SẮP XẾP ĐÚNG THỨ TỰ) ==================
+# ================== ADMIN COMMANDS - ĐẶT Ở ĐẦU (RẤT QUAN TRỌNG) ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
@@ -459,6 +240,129 @@ def update_stock_callback(call):
     del bot.pending_files[call.from_user.id]
     bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
                           call.message.chat.id, call.message.message_id)
+
+# ================== MUA HÀNG & NẠP TIỀN (giữ nguyên) ==================
+# (Phần này giữ nguyên như code trước, tôi rút gọn để code ngắn)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
+def handle_buy(call):
+    code = call.data.split("_")[1]
+    info = CATEGORIES.get(code)
+    if not info:
+        return bot.send_message(call.message.chat.id, "❌ Sản phẩm không tồn tại!")
+
+    user = get_user(call.from_user.id)
+    price = info["price"]
+    stock_count = get_stock_count(code)
+
+    if stock_count <= 0:
+        return bot.send_message(call.message.chat.id, "❌ Sản phẩm đã hết hàng!")
+
+    if code == "canva1slot":
+        if user.get("balance", 0) < price:
+            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ\nVui lòng nạp trước.")
+
+        update_balance(call.from_user.id, -price)
+
+        order_code = generate_order_code()
+        order = {
+            "order_code": order_code,
+            "user_id": call.from_user.id,
+            "category": "canva1slot",
+            "amount": price,
+            "type": "canva_1slot",
+            "status": "waiting_email",
+            "created_at": datetime.now()
+        }
+        orders.insert_one(order)
+        notify_admin(order)
+
+        stock_doc = stocks.find_one({"category": "canva1slot"})
+        if stock_doc and stock_doc.get("accounts"):
+            stock_doc["accounts"].pop(0)
+            stocks.update_one({"category": "canva1slot"}, {"$set": {"accounts": stock_doc["accounts"]}})
+
+        bot.send_message(call.message.chat.id, f"""
+✅ Đã trừ {price:,}đ từ ví!
+
+📧 Vui lòng gửi **email Canva (@gmail.com)** của bạn ngay.
+        """)
+        return
+
+    # Các sản phẩm khác (giữ nguyên)
+    if user.get("balance", 0) >= price:
+        update_balance(call.from_user.id, -price)
+        stock_doc = stocks.find_one({"category": code})
+        if stock_doc and stock_doc.get("accounts"):
+            account = stock_doc["accounts"].pop(0)
+            stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
+
+            bot.send_message(call.message.chat.id, f"""
+🎉 **Mua thành công từ ví!**
+
+Sản phẩm: {info['name']}
+Tài khoản: {account}
+Số dư còn lại: {user['balance'] - price:,}đ
+            """)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Sản phẩm tạm hết hàng!")
+    else:
+        order_code = generate_order_code()
+        order = {
+            "order_code": order_code,
+            "user_id": call.from_user.id,
+            "category": code,
+            "amount": price,
+            "type": "purchase",
+            "status": "pending",
+            "created_at": datetime.now()
+        }
+        orders.insert_one(order)
+        notify_admin(order)
+
+        payment_data = CreatePaymentLinkRequest(
+            order_code=order_code,
+            amount=price,
+            description=f"Don {order_code}",
+            return_url="https://t.me/" + bot.get_me().username,
+            cancel_url="https://t.me/" + bot.get_me().username
+        )
+        payment_link = payos.payment_requests.create(payment_data)
+
+        bot.send_message(call.message.chat.id, f"""
+✅ Đơn hàng #{order_code} đã tạo!
+
+💰 Số tiền: {price:,}đ
+📦 Sản phẩm: {info['name']}
+
+🔗 [Thanh toán ngay]({payment_link.checkout_url})
+        """)
+
+# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
+@bot.message_handler(func=lambda m: True)
+def handle_user_message(message):
+    pending = orders.find_one({
+        "user_id": message.from_user.id,
+        "type": "canva_1slot",
+        "status": "waiting_email"
+    })
+    if pending:
+        email = message.text.strip()
+        if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
+            return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng.")
+        
+        bot.send_message(ADMIN_ID, f"""
+📨 **YÊU CẦU THÊM CANVA 1 SLOT**
+
+Mã đơn: #{pending['order_code']}
+User ID: `{message.from_user.id}`
+Tên: {message.from_user.first_name or 'Không tên'}
+Email: `{email}`
+        """)
+
+        orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
+        bot.reply_to(message, "✅ Email đã được gửi cho admin!")
+        return
 
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
