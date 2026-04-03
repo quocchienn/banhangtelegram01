@@ -25,9 +25,9 @@ db = client['ban_taikhoan_pro']
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 
 # Collections
-users = db['users']          # Thông tin user + số dư ví
-orders = db['orders']        # Đơn hàng (mua & nạp)
-stocks = db['stocks']        # Stock tài khoản
+users = db['users']          # user info + balance
+orders = db['orders']        # đơn hàng (mua & nạp)
+stocks = db['stocks']        # stock tài khoản
 categories = db['categories']
 
 # Categories
@@ -134,7 +134,7 @@ def admin_view_balances(message):
 
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
-# ================== XEM VÍ CỦA TÔI (ĐÃ SỬA) ==================
+# ================== XEM VÍ CỦA TÔI ==================
 @bot.callback_query_handler(func=lambda call: call.data == "my_wallet")
 def show_wallet(call):
     try:
@@ -258,23 +258,20 @@ def admin_duyet_nap(message):
         user_id = order['user_id']
         amount = order['amount']
 
-        # Cộng tiền vào ví
         update_balance(user_id, amount)
 
-        # Cập nhật trạng thái đơn
         orders.update_one(
             {"order_code": order_code},
             {"$set": {"status": "approved", "approved_at": datetime.now()}}
         )
 
-        # Thông báo cho user
         bot.send_message(user_id, f"""
 ✅ **Nạp tiền đã được duyệt!**
 
 Số tiền: +{amount:,}đ
 Số dư hiện tại: {get_user(user_id)['balance']:,}đ
 
-Cảm ơn bạn đã nạp tiền!
+Cảm ơn bạn!
         """)
 
         bot.reply_to(message, f"✅ Đã duyệt nạp tiền #{order_code} - Cộng {amount:,}đ cho user {user_id}")
@@ -283,6 +280,66 @@ Cảm ơn bạn đã nạp tiền!
         bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>\nVí dụ: /duyetnap 12345678")
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+# ================== ADMIN XÓA SỐ DƯ ==================
+@bot.message_handler(commands=['resetbalance'])
+def admin_reset_balance(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
+
+    try:
+        user_id = int(message.text.split()[1])
+        user = get_user(user_id)
+        old_balance = user.get('balance', 0)
+
+        update_balance(user_id, -old_balance)
+
+        bot.reply_to(message, f"✅ Đã reset số dư của user `{user_id}`\nSố dư cũ: {old_balance:,}đ → 0đ")
+
+        try:
+            bot.send_message(user_id, "⚠️ Admin đã reset số dư ví của bạn về 0đ.")
+        except:
+            pass
+
+    except (IndexError, ValueError):
+        bot.reply_to(message, "Sử dụng: /resetbalance <user_id>\nVí dụ: /resetbalance 5589888565")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+
+@bot.message_handler(commands=['resetallbalance'])
+def admin_reset_all_balance(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng lệnh này!")
+
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận reset tất cả", callback_data="confirm_reset_all"))
+    markup.add(telebot.types.InlineKeyboardButton("❌ Hủy", callback_data="cancel_reset_all"))
+
+    bot.reply_to(message, 
+        "⚠️ **CẢNH BÁO**\n\n"
+        "Bạn sắp reset số dư về 0 cho **TẤT CẢ** người dùng.\n"
+        "Hành động này không thể hoàn tác.\n\n"
+        "Bạn có chắc chắn muốn thực hiện?", 
+        reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_reset_all", "cancel_reset_all"])
+def handle_reset_all_confirm(call):
+    if call.from_user.id != ADMIN_ID:
+        return bot.answer_callback_query(call.id, "Không có quyền!", show_alert=True)
+
+    if call.data == "cancel_reset_all":
+        bot.answer_callback_query(call.id, "Đã hủy.")
+        bot.edit_message_text("Đã hủy reset tất cả số dư.", call.message.chat.id, call.message.message_id)
+        return
+
+    result = users.update_many({}, {"$set": {"balance": 0}})
+    count = result.modified_count
+
+    bot.answer_callback_query(call.id, f"Đã reset {count} user!", show_alert=True)
+    bot.edit_message_text(f"✅ Đã reset số dư về 0 cho **{count}** người dùng.", 
+                          call.message.chat.id, call.message.message_id)
 
 # ================== MUA HÀNG (TRỪ TIỀN VÍ NẾU ĐỦ) ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
@@ -296,7 +353,6 @@ def handle_buy(call):
     price = info["price"]
 
     if user.get("balance", 0) >= price:
-        # Trừ tiền ví và giao tài khoản
         update_balance(call.from_user.id, -price)
 
         stock_doc = stocks.find_one({"category": category})
@@ -314,7 +370,6 @@ Số dư còn lại: {user['balance'] - price:,}đ
         else:
             bot.send_message(call.from_user.id, "❌ Sản phẩm tạm hết hàng!")
     else:
-        # Không đủ tiền → tạo link PayOS
         order_code = generate_order_code()
         orders.insert_one({
             "order_code": order_code,
