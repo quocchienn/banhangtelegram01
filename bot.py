@@ -30,11 +30,13 @@ stocks = db['stocks']
 categories = db['categories']
 
 CATEGORIES = {
-    "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
+    "hotspot": {"name": "Hotspot Shield 1 Tuần", "price": 2000, "type": "normal"},
     "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal"},
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000, "type": "normal"},
-    "canva1slot": {"name": "Canva 1 Slot", "price": 2000, "type": "canva_1slot"},
-    "canva100slot": {"name": "Canva 100 Slot", "price": 30000, "type": "normal"},
+    "meitu": {"name": "Meitu 1 Tuần", "price": 2000, "type": "normal"},
+    "wink": {"name": "Wink 1 Tuần", "price": 2000, "type": "normal"},
+    "canva1slot": {"name": "Canva 1 Slot 30 Ngày", "price": 2000, "type": "canva_1slot"},
+    "canva100slot": {"name": "Canva 100 Slot Ngày", "price": 30000, "type": "normal"},
 }
 
 for code, info in CATEGORIES.items():
@@ -206,7 +208,7 @@ def start(message):
     markup.add(telebot.types.InlineKeyboardButton("💳 Nạp tiền vào ví", callback_data="deposit"))
 
     bot.send_message(message.chat.id, 
-        f"👋 Chào **{message.from_user.first_name}**!\n\nChọn sản phẩm bạn muốn mua:", 
+        f"👋 Chào **{message.from_user.first_name}**!\n\nChọn sản phẩm bạn muốn mua Lưu ý nạp tiền vào Ví Sẽ Nhận Tài Khoản Nhanh hơn:", 
         parse_mode='Markdown', reply_markup=markup)
 
 # ================== CALLBACK HANDLER ==================
