@@ -30,13 +30,14 @@ stocks = db['stocks']
 categories = db['categories']
 
 CATEGORIES = {
-    "hotspot": {"name": "Hotspot Shield 1 Tuần", "price": 2000, "type": "normal"},
+    "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
     "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal"},
     "capcut": {"name": "CapCut Pro 1 Tuần", "price": 2000, "type": "normal"},
     "meitu": {"name": "Meitu 1 Tuần", "price": 2000, "type": "normal"},
     "wink": {"name": "Wink 1 Tuần", "price": 2000, "type": "normal"},
-    "canva1slot": {"name": "Canva 1 Slot 30 Ngày", "price": 2000, "type": "canva_1slot"},
-    "canva100slot": {"name": "Canva 100 Slot Ngày", "price": 30000, "type": "normal"},
+    "canva1slot": {"name": "Canva 1 Slot", "price": 2000, "type": "canva_1slot"},
+    "canva100slot": {"name": "Canva 100 Slot", "price": 30000, "type": "normal"},
+    "youtube1slot": {"name": "YouTube 1 Slot", "price": 2000, "type": "youtube_1slot"},   # <-- Mới thêm
 }
 
 for code, info in CATEGORIES.items():
@@ -88,7 +89,7 @@ Trạng thái: Chờ thanh toán
     except:
         pass
 
-# ================== ADMIN COMMANDS - ĐẶT Ở ĐẦU TIÊN ==================
+# ================== ADMIN COMMANDS ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
@@ -188,118 +189,72 @@ def admin_reset_canva1(message):
     )
     bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot** và mở bán lại!")
 
-# ================== START COMMAND - ĐẶT SAU ADMIN ==================
-@bot.message_handler(commands=['start'])
-def start(message):
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    for code, info in CATEGORIES.items():
-        stock_count = get_stock_count(code)
-        if stock_count > 0:
-            markup.add(telebot.types.InlineKeyboardButton(
-                f"🛒 Mua {info['name']} - {info['price']:,}đ (còn {stock_count})",
-                callback_data=f"buy_{code}"
-            ))
-        else:
-            markup.add(telebot.types.InlineKeyboardButton(
-                f"{info['name']} - 🔒 Hết hàng", callback_data="outofstock"
-            ))
-
-    markup.add(telebot.types.InlineKeyboardButton("💰 Ví của tôi", callback_data="my_wallet"))
-    markup.add(telebot.types.InlineKeyboardButton("💳 Nạp tiền vào ví", callback_data="deposit"))
-
-    bot.send_message(message.chat.id, 
-        f"👋 Chào **{message.from_user.first_name}**!\n\nChọn sản phẩm bạn muốn mua Lưu ý nạp tiền vào Ví Sẽ Nhận Tài Khoản Nhanh hơn:", 
-        parse_mode='Markdown', reply_markup=markup)
-
-# ================== CALLBACK HANDLER ==================
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    bot.answer_callback_query(call.id)
-    try:
-        data = call.data
-        if data == "my_wallet":
-            show_wallet(call)
-        elif data == "deposit":
-            deposit_menu(call)
-        elif data.startswith("deposit_"):
-            handle_deposit(call)
-        elif data.startswith("buy_"):
-            handle_buy(call)
-        elif data == "outofstock":
-            bot.send_message(call.message.chat.id, "❌ Sản phẩm hiện đang hết hàng!")
-    except Exception as e:
-        print("Lỗi callback:", str(e))
-        bot.send_message(call.message.chat.id, "❌ Có lỗi xảy ra!")
-
-def show_wallet(call):
-    user = get_user(call.from_user.id)
-    joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y %H:%M')
-    text = f"""
-🆔 **ID:** `{call.from_user.id}`
-👤 **Tên:** {call.from_user.first_name or 'Không có tên'}
-💰 **Số dư:** `{user.get('balance', 0):,}đ`
-📅 **Tham gia:** {joined}
-    """
-    bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
-
-# ================== NẠP TIỀN ==================
-def deposit_menu(call):
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
-    markup.add(telebot.types.InlineKeyboardButton("100.000đ", callback_data="deposit_100000"))
-    markup.add(telebot.types.InlineKeyboardButton("200.000đ", callback_data="deposit_200000"))
-    markup.add(telebot.types.InlineKeyboardButton("Nhập số khác", callback_data="deposit_custom"))
-    bot.send_message(call.message.chat.id, "💳 Chọn số tiền muốn nạp vào ví:", reply_markup=markup)
-
-def handle_deposit(call):
-    if call.data == "deposit_custom":
-        bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (ví dụ: 2000):")
-        bot.register_next_step_handler(call.message, process_custom_deposit)
-        return
-    try:
-        amount = int(call.data.split("_")[1])
-        create_payment_link(call.message.chat.id, call.from_user.id, amount)
-    except:
-        bot.send_message(call.message.chat.id, "❌ Có lỗi khi xử lý.")
-
-def process_custom_deposit(message):
-    try:
-        amount = int(message.text.strip())
-        if amount < 2000:
-            return bot.reply_to(message, "Số tiền tối thiểu là 2.000đ!")
-        create_payment_link(message.chat.id, message.from_user.id, amount)
-    except ValueError:
-        bot.reply_to(message, "Vui lòng nhập số tiền hợp lệ!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
-
-def create_payment_link(chat_id, user_id, amount):
-    order_code = generate_order_code()
-    order = {
-        "order_code": order_code,
-        "user_id": user_id,
-        "type": "deposit",
-        "amount": amount,
-        "status": "pending",
-        "created_at": datetime.now()
-    }
-    orders.insert_one(order)
-    notify_admin(order)
-
-    payment_data = CreatePaymentLinkRequest(
-        order_code=order_code,
-        amount=amount,
-        description=f"Nap vi {amount}đ",
-        return_url="https://t.me/" + bot.get_me().username,
-        cancel_url="https://t.me/" + bot.get_me().username
+# ================== RESET YOUTUBE 1 SLOT (Mới thêm) ==================
+@bot.message_handler(commands=['resetyoutube'])
+def admin_reset_youtube(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+    stocks.update_one(
+        {"category": "youtube1slot"},
+        {"$set": {"accounts": ["Slot sẵn sàng"] * 10}},
+        upsert=True
     )
-    payment_link = payos.payment_requests.create(payment_data)
-    bot.send_message(chat_id, 
-        f"💰 **Nạp tiền vào ví**\n\n"
-        f"Số tiền: {amount:,}đ\n"
-        f"Mã đơn: #{order_code}\n\n"
-        f"🔗 [Thanh toán ngay]({payment_link.checkout_url})", 
-        parse_mode='Markdown')
+    bot.reply_to(message, "✅ Đã reset YouTube 1 Slot về **10 slot** và mở bán lại!")
+
+# ================== UPLOAD FILE TXT ==================
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới được upload file!")
+
+    try:
+        file_name = (message.document.file_name or "").lower()
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        content = downloaded_file.decode('utf-8')
+
+        lines = [line.strip() for line in content.split('\n') if line.strip()]
+
+        category = None
+        for code, info in CATEGORIES.items():
+            if any(kw in file_name for kw in [code.lower(), info["name"].lower()]):
+                category = code
+                break
+
+        if category:
+            added = 0
+            for line in lines:
+                if line:
+                    stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
+                    added += 1
+            bot.reply_to(message, f"✅ Đã tự động thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**")
+        else:
+            markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+            for code, info in CATEGORIES.items():
+                markup.add(telebot.types.InlineKeyboardButton(info["name"], callback_data=f"update_stock_{code}"))
+            bot.reply_to(message, "File đã nhận. Chọn loại tài khoản để cập nhật:", reply_markup=markup)
+            if not hasattr(bot, 'pending_files'):
+                bot.pending_files = {}
+            bot.pending_files[message.from_user.id] = {"content": lines}
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi xử lý file: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("update_stock_"))
+def update_stock_callback(call):
+    bot.answer_callback_query(call.id)
+    category = call.data.split("_")[2]
+    if not hasattr(bot, 'pending_files') or call.from_user.id not in bot.pending_files:
+        return bot.send_message(call.message.chat.id, "❌ Không tìm thấy file!")
+    lines = bot.pending_files[call.from_user.id]["content"]
+    added = 0
+    for line in lines:
+        if line:
+            stocks.update_one({"category": category}, {"$push": {"accounts": line}}, upsert=True)
+            added += 1
+    del bot.pending_files[call.from_user.id]
+    bot.edit_message_text(f"✅ Đã thêm **{added}** tài khoản vào **{CATEGORIES[category]['name']}**", 
+                          call.message.chat.id, call.message.message_id)
 
 # ================== MUA HÀNG ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
@@ -316,7 +271,7 @@ def handle_buy(call):
     if stock_count <= 0:
         return bot.send_message(call.message.chat.id, "❌ Sản phẩm đã hết hàng!")
 
-    if code == "canva1slot":
+    if code in ["canva1slot", "youtube1slot"]:   # Cả 2 loại đặc biệt
         if user.get("balance", 0) < price:
             return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ\nVui lòng nạp trước.")
 
@@ -326,24 +281,24 @@ def handle_buy(call):
         order = {
             "order_code": order_code,
             "user_id": call.from_user.id,
-            "category": "canva1slot",
+            "category": code,
             "amount": price,
-            "type": "canva_1slot",
+            "type": code,
             "status": "waiting_email",
             "created_at": datetime.now()
         }
         orders.insert_one(order)
         notify_admin(order)
 
-        stock_doc = stocks.find_one({"category": "canva1slot"})
+        stock_doc = stocks.find_one({"category": code})
         if stock_doc and stock_doc.get("accounts"):
             stock_doc["accounts"].pop(0)
-            stocks.update_one({"category": "canva1slot"}, {"$set": {"accounts": stock_doc["accounts"]}})
+            stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
 
         bot.send_message(call.message.chat.id, f"""
 ✅ Đã trừ {price:,}đ từ ví!
 
-📧 Vui lòng gửi **email Canva (@gmail.com)** của bạn ngay bây giờ.
+📧 Vui lòng gửi **email** của bạn ngay bây giờ.
         """)
         return
 
@@ -396,21 +351,20 @@ Số dư còn lại: {user['balance'] - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """)
 
-# ================== XỬ LÝ EMAIL CANVA 1 SLOT ==================
+# ================== XỬ LÝ EMAIL CHO CẢ CANVA 1 SLOT VÀ YOUTUBE 1 SLOT ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     pending = orders.find_one({
         "user_id": message.from_user.id,
-        "type": "canva_1slot",
         "status": "waiting_email"
     })
-    if pending:
+    if pending and pending.get("type") in ["canva_1slot", "youtube1slot"]:
         email = message.text.strip()
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
             return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!\nVui lòng gửi lại đúng định dạng.")
-        
+
         bot.send_message(ADMIN_ID, f"""
-📨 **YÊU CẦU THÊM CANVA 1 SLOT**
+📨 **YÊU CẦU THÊM {CATEGORIES.get(pending['category'], {}).get('name', '1 Slot')}**
 
 Mã đơn: #{pending['order_code']}
 User ID: `{message.from_user.id}`
