@@ -5,11 +5,14 @@ from datetime import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from payos import PayOS
-from payos.types import CreatePaymentLinkRequest
-from flask import Flask
+from payos.types import CreatePaymentLinkRequest, WebhookType, WebhookDataType
+from flask import Flask, request, jsonify
 import threading
 import time
 import re
+import hashlib
+import hmac
+import json
 
 load_dotenv()
 
@@ -28,6 +31,9 @@ users = db['users']
 orders = db['orders']
 stocks = db['stocks']
 categories = db['categories']
+
+# Cấu hình webhook URL (Render sẽ tự động gán domain)
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://your-app.onrender.com/webhook')
 
 CATEGORIES = {
     "hotspot": {"name": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
@@ -87,6 +93,34 @@ Trạng thái: Chờ thanh toán
     except:
         pass
 
+def notify_admin_payment_success(order):
+    """Thông báo admin khi có thanh toán thành công"""
+    user = get_user(order["user_id"])
+    if order["type"] == "deposit":
+        text = f"""
+✅ **THANH TOÁN NẠP TIỀN THÀNH CÔNG**
+
+Mã đơn: #{order['order_code']}
+User ID: `{order['user_id']}`
+Tên: {user.get('first_name', 'Không tên')}
+Số tiền: **{order['amount']:,}đ**
+Đã tự động cộng vào ví!
+        """
+    else:
+        text = f"""
+✅ **THANH TOÁN MUA HÀNG THÀNH CÔNG**
+
+Mã đơn: #{order['order_code']}
+User ID: `{order['user_id']}`
+Tên: {user.get('first_name', 'Không tên')}
+Số tiền: **{order['amount']:,}đ**
+Đang chờ xử lý giao hàng...
+        """
+    try:
+        bot.send_message(ADMIN_ID, text)
+    except:
+        pass
+
 # ================== ADMIN COMMANDS ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
@@ -99,7 +133,7 @@ def admin_view_balances(message):
         text += f"👤 {name} (ID: `{u['user_id']}`) → 💰 `{u.get('balance', 0):,}đ`\n"
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
-@bot.message_handler(commands=['duyetnap'])
+@bot.message_handler(commands=['duyetnap'])  # Giữ lại cho trường hợp cần duyệt thủ công
 def admin_duyet_nap(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
@@ -126,8 +160,22 @@ def admin_giao(message):
         order = orders.find_one({"order_code": order_code})
         if not order:
             return bot.reply_to(message, "❌ Không tìm thấy đơn!")
+        
+        # Kiểm tra nếu đơn mua hàng đã thanh toán nhưng chưa giao
+        if order.get("status") != "paid":
+            return bot.reply_to(message, "❌ Đơn hàng chưa được thanh toán!")
+        
         category = order.get("category")
         user_id = order["user_id"]
+        
+        # Xử lý Canva 1 slot hoặc YouTube 1 slot
+        if category in ["canva1slot", "youtube1slot"]:
+            # Đã xử lý từ trước khi nhận webhook
+            orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now()}})
+            bot.reply_to(message, f"✅ Đã xác nhận giao thành công đơn #{order_code} (đã được xử lý từ webhook)")
+            return
+        
+        # Các sản phẩm thường
         stock_doc = stocks.find_one({"category": category})
         if not stock_doc or not stock_doc.get("accounts"):
             return bot.reply_to(message, "❌ Hết stock loại này!")
@@ -190,6 +238,19 @@ def admin_reset_youtube(message):
     stocks.update_one({"category": "youtube1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 10}}, upsert=True)
     bot.reply_to(message, "✅ Đã reset YouTube 1 Slot về **10 slot**!")
 
+@bot.message_handler(commands=['setwebhook'])
+def admin_set_webhook(message):
+    """Lệnh để cập nhật webhook trên PayOS"""
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+    
+    try:
+        # Cập nhật webhook trên PayOS
+        result = payos.payment_requests.update_webhook(webhook_url=WEBHOOK_URL)
+        bot.reply_to(message, f"✅ Đã cập nhật webhook thành công!\nURL: {WEBHOOK_URL}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi cập nhật webhook: {str(e)}")
+
 # ================== /start ==================
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -240,18 +301,20 @@ def show_wallet(call):
     """
     bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
 
-# ================== NẠP TIỀN (ĐÃ SỬA) ==================
+# ================== NẠP TIỀN ==================
 def deposit_menu(call):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(telebot.types.InlineKeyboardButton("20.000đ", callback_data="deposit_20000"))
     markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
     markup.add(telebot.types.InlineKeyboardButton("100.000đ", callback_data="deposit_100000"))
     markup.add(telebot.types.InlineKeyboardButton("200.000đ", callback_data="deposit_200000"))
+    markup.add(telebot.types.InlineKeyboardButton("500.000đ", callback_data="deposit_500000"))
     markup.add(telebot.types.InlineKeyboardButton("Nhập số khác", callback_data="deposit_custom"))
     bot.send_message(call.message.chat.id, "💳 Chọn số tiền muốn nạp vào ví:", reply_markup=markup)
 
 def handle_deposit_amount(call):
     if call.data == "deposit_custom":
-        bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (tối thiểu 2.000đ):")
+        bot.send_message(call.message.chat.id, "Nhập số tiền muốn nạp (tối thiểu 10.000đ):")
         bot.register_next_step_handler(call.message, process_custom_deposit)
         return
     try:
@@ -263,8 +326,10 @@ def handle_deposit_amount(call):
 def process_custom_deposit(message):
     try:
         amount = int(message.text.strip())
-        if amount < 2000:
-            return bot.reply_to(message, "❌ Số tiền tối thiểu là 2.000đ!")
+        if amount < 10000:
+            return bot.reply_to(message, "❌ Số tiền tối thiểu là 10.000đ!")
+        if amount > 5000000:
+            return bot.reply_to(message, "❌ Số tiền tối đa là 5.000.000đ!")
         create_deposit_payment(message.chat.id, message.from_user.id, amount)
     except ValueError:
         bot.reply_to(message, "❌ Vui lòng nhập số tiền hợp lệ!")
@@ -284,13 +349,12 @@ def create_deposit_payment(chat_id, user_id, amount):
     orders.insert_one(order)
     notify_admin(order)
 
-    # SỬA Ở ĐÂY: Mô tả là mã đơn hàng
     payment_data = CreatePaymentLinkRequest(
         order_code=order_code,
         amount=amount,
-        description=f"Nap #{order_code}",   # <-- Đây là phần đã sửa
-        return_url="https://t.me/" + bot.get_me().username,
-        cancel_url="https://t.me/" + bot.get_me().username
+        description=f"Nap tien #{order_code}",
+        return_url=f"https://t.me/{bot.get_me().username}",
+        cancel_url=f"https://t.me/{bot.get_me().username}"
     )
     payment_link = payos.payment_requests.create(payment_data)
 
@@ -301,9 +365,11 @@ Mã đơn: #{order_code}
 Số tiền: **{amount:,}đ**
 
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
+
+⚠️ Sau khi thanh toán, tiền sẽ **tự động** được cộng vào ví!
     """, parse_mode='Markdown')
 
-# ================== MUA HÀNG & XỬ LÝ EMAIL ==================
+# ================== MUA HÀNG ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
@@ -348,7 +414,7 @@ def handle_buy(call):
         """)
         return
 
-    # Các sản phẩm khác (giữ nguyên)
+    # Các sản phẩm khác
     if user.get("balance", 0) >= price:
         update_balance(call.from_user.id, -price)
         stock_doc = stocks.find_one({"category": code})
@@ -365,16 +431,24 @@ Số dư còn lại: {user.get('balance', 0) - price:,}đ
     else:
         # Tạo đơn PayOS cho sản phẩm thường
         order_code = generate_order_code()
-        order = {"order_code": order_code, "user_id": call.from_user.id, "category": code, "amount": price, "type": "purchase", "status": "pending", "created_at": datetime.now()}
+        order = {
+            "order_code": order_code, 
+            "user_id": call.from_user.id, 
+            "category": code, 
+            "amount": price, 
+            "type": "purchase", 
+            "status": "pending", 
+            "created_at": datetime.now()
+        }
         orders.insert_one(order)
         notify_admin(order)
 
         payment_data = CreatePaymentLinkRequest(
             order_code=order_code,
             amount=price,
-            description=f"Don #{order_code}",
-            return_url="https://t.me/" + bot.get_me().username,
-            cancel_url="https://t.me/" + bot.get_me().username
+            description=f"Mua {info['name'][:20]} #{order_code}",
+            return_url=f"https://t.me/{bot.get_me().username}",
+            cancel_url=f"https://t.me/{bot.get_me().username}"
         )
         payment_link = payos.payment_requests.create(payment_data)
         bot.send_message(call.message.chat.id, f"""
@@ -384,6 +458,8 @@ Số dư còn lại: {user.get('balance', 0) - price:,}đ
 📦 Sản phẩm: {info['name']}
 
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
+
+⚠️ Sau khi thanh toán, admin sẽ giao hàng tự động!
         """, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: True)
@@ -406,12 +482,196 @@ Email: `{email}`
         bot.reply_to(message, "✅ Email đã được gửi cho admin!")
         return
 
+# ================== WEBHOOK XỬ LÝ THANH TOÁN TỰ ĐỘNG ==================
+def verify_webhook_signature(data, signature):
+    """Xác minh chữ ký webhook từ PayOS"""
+    try:
+        # Tạo checksum từ data
+        checksum_data = json.dumps(data, separators=(',', ':'))
+        expected_signature = hmac.new(
+            os.getenv('PAYOS_CHECKSUM_KEY').encode('utf-8'),
+            checksum_data.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected_signature, signature)
+    except Exception as e:
+        print(f"Lỗi xác minh chữ ký: {e}")
+        return False
+
+def process_payment_success(data):
+    """Xử lý khi thanh toán thành công"""
+    try:
+        order_code = data.get('orderCode')
+        amount = data.get('amount')
+        description = data.get('description', '')
+        
+        if not order_code:
+            return False
+        
+        # Tìm đơn hàng trong database
+        order = orders.find_one({"order_code": order_code})
+        if not order:
+            print(f"Không tìm thấy đơn hàng #{order_code}")
+            return False
+        
+        # Kiểm tra nếu đơn hàng đã được xử lý
+        if order.get("status") not in ["pending", "waiting_email", "waiting_admin"]:
+            print(f"Đơn hàng #{order_code} đã được xử lý trước đó (status: {order.get('status')})")
+            return True
+        
+        user_id = order["user_id"]
+        
+        if order["type"] == "deposit":
+            # Nạp tiền: cộng trực tiếp vào ví
+            update_balance(user_id, amount)
+            orders.update_one({"order_code": order_code}, {"$set": {
+                "status": "approved", 
+                "approved_at": datetime.now(),
+                "payment_data": data
+            }})
+            
+            # Thông báo cho user
+            try:
+                bot.send_message(user_id, f"""
+✅ **NẠP TIỀN THÀNH CÔNG!**
+
+Mã đơn: #{order_code}
+Số tiền: +{amount:,}đ
+Số dư hiện tại: {get_user(user_id)['balance']:,}đ
+
+Cảm ơn bạn đã sử dụng dịch vụ!
+                """)
+            except Exception as e:
+                print(f"Không thể gửi tin nhắn cho user {user_id}: {e}")
+            
+            # Thông báo admin
+            notify_admin_payment_success(order)
+            
+        elif order["type"] == "purchase":
+            # Mua hàng: cập nhật trạng thái đã thanh toán
+            orders.update_one({"order_code": order_code}, {"$set": {
+                "status": "paid", 
+                "paid_at": datetime.now(),
+                "payment_data": data
+            }})
+            
+            # Thông báo cho user
+            cat_name = CATEGORIES.get(order.get("category"), {}).get("name", "Sản phẩm")
+            try:
+                bot.send_message(user_id, f"""
+✅ **THANH TOÁN THÀNH CÔNG!**
+
+Mã đơn: #{order_code}
+Sản phẩm: {cat_name}
+Số tiền: {amount:,}đ
+
+🔄 Đơn hàng đang được xử lý, admin sẽ giao hàng trong giây lát!
+                """)
+            except Exception as e:
+                print(f"Không thể gửi tin nhắn cho user {user_id}: {e}")
+            
+            # Thông báo admin
+            notify_admin_payment_success(order)
+            
+            # TỰ ĐỘNG GIAO HÀNG CHO SẢN PHẨM THƯỜNG (không cần email)
+            category = order.get("category")
+            if category and category not in ["canva1slot", "youtube1slot"]:
+                # Giao hàng tự động
+                stock_doc = stocks.find_one({"category": category})
+                if stock_doc and stock_doc.get("accounts"):
+                    account = stock_doc["accounts"].pop(0)
+                    stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
+                    
+                    orders.update_one({"order_code": order_code}, {"$set": {
+                        "status": "delivered", 
+                        "delivered_at": datetime.now(),
+                        "account": account
+                    }})
+                    
+                    try:
+                        bot.send_message(user_id, f"""
+🎉 **HÀNG ĐÃ ĐƯỢC GIAO!**
+
+Đơn: #{order_code}
+Sản phẩm: {cat_name}
+Tài khoản: {account}
+
+Cảm ơn bạn đã mua hàng!
+                        """)
+                    except Exception as e:
+                        print(f"Không thể gửi tin nhắn giao hàng: {e}")
+                else:
+                    # Hết stock, báo admin
+                    try:
+                        bot.send_message(ADMIN_ID, f"""
+⚠️ **HẾT STOCK!**
+
+Đơn hàng #{order_code} đã được thanh toán nhưng hết stock {cat_name}
+User ID: `{user_id}`
+Vui lòng xử lý thủ công!
+                        """)
+                    except:
+                        pass
+        else:
+            # Các loại đơn khác (canva1slot, youtube1slot) - chỉ cập nhật trạng thái đã thanh toán
+            orders.update_one({"order_code": order_code}, {"$set": {
+                "status": "paid", 
+                "paid_at": datetime.now(),
+                "payment_data": data
+            }})
+            
+            # Thông báo admin
+            notify_admin_payment_success(order)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Lỗi xử lý webhook: {e}")
+        return False
+
+@flask_app.route('/webhook', methods=['POST'])
+def webhook_handler():
+    """Endpoint nhận callback từ PayOS"""
+    try:
+        # Lấy dữ liệu từ request
+        data = request.get_json()
+        signature = request.headers.get('X-PayOS-Signature', '')
+        
+        print(f"Nhận webhook: {data}")
+        
+        if not data:
+            return jsonify({"error": "No data received"}), 400
+        
+        # Xác minh chữ ký (tùy chọn, có thể bỏ qua nếu muốn)
+        # if not verify_webhook_signature(data, signature):
+        #     print("Chữ ký webhook không hợp lệ")
+        #     return jsonify({"error": "Invalid signature"}), 401
+        
+        # Kiểm tra trạng thái thanh toán
+        if data.get('status') == 'PAID':
+            success = process_payment_success(data)
+            if success:
+                return jsonify({"success": True}), 200
+            else:
+                return jsonify({"error": "Cannot process payment"}), 500
+        else:
+            print(f"Trạng thái thanh toán: {data.get('status')} - Bỏ qua")
+            return jsonify({"success": True, "message": "Not paid yet"}), 200
+            
+    except Exception as e:
+        print(f"Lỗi webhook: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    return "Bot is alive on Render!"
+    return jsonify({
+        "status": "Bot is alive on Render!",
+        "webhook_url": WEBHOOK_URL,
+        "time": datetime.now().isoformat()
+    })
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -421,5 +681,10 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     time.sleep(2)
+    
+    # In thông tin webhook
     print("🤖 Bot đang chạy...")
+    print(f"📡 Webhook URL: {WEBHOOK_URL}")
+    print("⚡ Thanh toán sẽ được xử lý tự động qua webhook!")
+    
     bot.infinity_polling()
