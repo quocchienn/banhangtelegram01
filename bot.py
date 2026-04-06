@@ -10,9 +10,6 @@ from flask import Flask, request, jsonify
 import threading
 import time
 import re
-import hashlib
-import hmac
-import json
 
 load_dotenv()
 
@@ -32,7 +29,7 @@ orders = db['orders']
 stocks = db['stocks']
 categories = db['categories']
 
-# Cấu hình webhook URL (Render sẽ tự động gán domain)
+# Cấu hình webhook URL (thay tên app của bạn)
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://your-app.onrender.com/webhook')
 
 CATEGORIES = {
@@ -89,12 +86,11 @@ Số tiền: **{order['amount']:,}đ**
 Trạng thái: Chờ thanh toán
         """
     try:
-        bot.send_message(ADMIN_ID, text)
+        bot.send_message(ADMIN_ID, text, parse_mode='Markdown')
     except:
         pass
 
 def notify_admin_payment_success(order):
-    """Thông báo admin khi có thanh toán thành công"""
     user = get_user(order["user_id"])
     if order["type"] == "deposit":
         text = f"""
@@ -117,7 +113,7 @@ Số tiền: **{order['amount']:,}đ**
 Đang chờ xử lý giao hàng...
         """
     try:
-        bot.send_message(ADMIN_ID, text)
+        bot.send_message(ADMIN_ID, text, parse_mode='Markdown')
     except:
         pass
 
@@ -169,7 +165,7 @@ def admin_giao(message):
         
         if category in ["canva1slot", "youtube1slot"]:
             orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now()}})
-            bot.reply_to(message, f"✅ Đã xác nhận giao thành công đơn #{order_code} (đã được xử lý từ webhook)")
+            bot.reply_to(message, f"✅ Đã xác nhận giao thành công đơn #{order_code}")
             return
         
         stock_doc = stocks.find_one({"category": category})
@@ -238,11 +234,22 @@ def admin_reset_youtube(message):
 def admin_set_webhook(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    try:
-        result = payos.payment_requests.update_webhook(webhook_url=WEBHOOK_URL)
-        bot.reply_to(message, f"✅ Đã cập nhật webhook thành công!\nURL: {WEBHOOK_URL}")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi cập nhật webhook: {str(e)}")
+    
+    bot.reply_to(message, f"""
+🔧 **HƯỚNG DẪN CẬP NHẬT WEBHOOK**
+
+Vui lòng cập nhật thủ công trên PayOS Dashboard:
+
+1️⃣ Đăng nhập [PayOS Dashboard](https://payos.vn/dashboard)
+2️⃣ Chọn "Cài đặt" → "Webhook"  
+3️⃣ Nhập URL: `{WEBHOOK_URL}`
+4️⃣ Lưu lại
+
+📌 **URL Webhook của bạn:** 
+`{WEBHOOK_URL}`
+
+✅ Sau khi cập nhật, thanh toán sẽ tự động xử lý!
+    """, parse_mode='Markdown', disable_web_page_preview=True)
 
 # ================== /start ==================
 @bot.message_handler(commands=['start'])
@@ -319,7 +326,7 @@ def handle_deposit_amount(call):
 def process_custom_deposit(message):
     try:
         amount = int(message.text.strip())
-        if amount < 10000:
+        if amount < 2000:
             return bot.reply_to(message, "❌ Số tiền tối thiểu là 10.000đ!")
         if amount > 5000000:
             return bot.reply_to(message, "❌ Số tiền tối đa là 5.000.000đ!")
@@ -468,7 +475,7 @@ Mã đơn: #{pending['order_code']}
 User ID: `{message.from_user.id}`
 Tên: {message.from_user.first_name or 'Không tên'}
 Email: `{email}`
-        """)
+        """, parse_mode='Markdown')
         orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
         bot.reply_to(message, "✅ Email đã được gửi cho admin!")
         return
@@ -575,7 +582,7 @@ Cảm ơn bạn đã mua hàng!
 Đơn hàng #{order_code} đã được thanh toán nhưng hết stock {cat_name}
 User ID: `{user_id}`
 Vui lòng xử lý thủ công!
-                        """)
+                        """, parse_mode='Markdown')
                     except:
                         pass
         else:
