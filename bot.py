@@ -413,21 +413,52 @@ def payos_webhook():
         print(f"Lỗi: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ========== TELEGRAM WEBHOOK ENDPOINT - QUAN TRỌNG ==========
+@flask_app.route('/webhook/telegram', methods=['POST'])
+def telegram_webhook():
+    """Endpoint nhận update từ Telegram"""
+    try:
+        # Đọc dữ liệu JSON từ request
+        json_str = request.get_data().decode('utf-8')
+        update_dict = json.loads(json_str)
+        
+        # Chuyển đổi thành Update object và xử lý
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        
+        print(f"✅ Đã xử lý telegram update: {update.update_id}")
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        print(f"❌ Lỗi telegram webhook: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@flask_app.route('/webhook/telegram', methods=['GET'])
+def telegram_webhook_get():
+    """GET request cho webhook (dùng để test)"""
+    return jsonify({"status": "Telegram webhook endpoint is ready"}), 200
+
 @flask_app.route('/')
 def home():
     return jsonify({"status": "Bot is running!", "time": datetime.now().isoformat()})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    app_url = f"https://banhangtelegram01.onrender.com"
+    telegram_webhook_url = f"{app_url}/webhook/telegram"
     
-    # Set Telegram webhook
-    telegram_webhook_url = f"https://banhangtelegram01.onrender.com/webhook/telegram"
+    # Set webhook cho Telegram bot
     try:
         bot.remove_webhook()
-        bot.set_webhook(url=telegram_webhook_url)
-        print(f"✅ Telegram webhook set: {telegram_webhook_url}")
+        result = bot.set_webhook(url=telegram_webhook_url)
+        if result:
+            print(f"✅ Telegram webhook set thành công: {telegram_webhook_url}")
+        else:
+            print(f"❌ Set webhook thất bại")
     except Exception as e:
         print(f"❌ Lỗi set webhook: {e}")
     
-    print("🤖 Bot đang chạy với webhook mode!")
+    print(f"🤖 Bot đang chạy với webhook mode!")
+    print(f"📡 Telegram Webhook URL: {telegram_webhook_url}")
+    print(f"💳 PayOS Webhook URL: {app_url}/webhook/payos")
+    
     flask_app.run(host="0.0.0.0", port=port, debug=False)
