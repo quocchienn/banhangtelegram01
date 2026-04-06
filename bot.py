@@ -24,7 +24,7 @@ client = MongoClient(os.getenv('MONGO_URI'))
 db = client['ban_taikhoan_pro']
 
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')   # Phải đặt là: https://banhangtelegram01.onrender.com
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Phải là: https://banhangtelegram01.onrender.com
 
 users = db['users']
 orders = db['orders']
@@ -42,11 +42,9 @@ CATEGORIES = {
     "youtube1slot": {"name": "YouTube 1 Slot", "price": 2000, "type": "youtube_1slot"},
 }
 
-# Khởi tạo categories
 for code, info in CATEGORIES.items():
     categories.update_one({"code": code}, {"$setOnInsert": {
-        "code": code, "name": info["name"], "price": info["price"], 
-        "type": info.get("type"), "enabled": True
+        "code": code, "name": info["name"], "price": info["price"], "type": info.get("type"), "enabled": True
     }}, upsert=True)
 
 def get_user(user_id):
@@ -83,7 +81,7 @@ Trạng thái: {'ĐÃ CỘNG TIỀN' if is_auto else 'Chờ thanh toán'}
     except:
         pass
 
-# ====================== ADMIN COMMANDS (ĐẶT ĐẦU TIÊN) ======================
+# ====================== ADMIN COMMANDS ======================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
@@ -177,7 +175,7 @@ def start(message):
         f"👋 Chào **{message.from_user.first_name}**!\n\nChọn sản phẩm bạn muốn mua:", 
         parse_mode='Markdown', reply_markup=markup)
 
-# ====================== CALLBACK HANDLER ======================
+# ====================== CALLBACK & NẠP TIỀN ======================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     bot.answer_callback_query(call.id)
@@ -206,7 +204,6 @@ def show_wallet(call):
     """
     bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
 
-# ====================== NẠP TIỀN ======================
 def deposit_menu(call):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
@@ -265,7 +262,7 @@ Số tiền: **{amount:,}đ**
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
     """, parse_mode='Markdown')
 
-# ====================== MUA HÀNG ======================
+# ====================== MUA HÀNG & EMAIL ======================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
@@ -282,8 +279,7 @@ def handle_buy(call):
 
     if code in ["canva1slot", "youtube1slot"]:
         if user.get("balance", 0) < price:
-            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {user.get('balance', 0):,}đ")
-        
+            return bot.send_message(call.message.chat.id, f"❌ Số dư ví không đủ!\nCần {price:,}đ")
         update_balance(call.from_user.id, -price)
         order_code = generate_order_code()
         order = {
@@ -355,7 +351,6 @@ Số dư còn lại: {user.get('balance', 0) - price:,}đ
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
         """, parse_mode='Markdown')
 
-# ====================== XỬ LÝ EMAIL ======================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     pending = orders.find_one({"user_id": message.from_user.id, "status": "waiting_email"})
@@ -363,7 +358,6 @@ def handle_user_message(message):
         email = message.text.strip()
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
             return bot.reply_to(message, "❌ Chỉ chấp nhận email @gmail.com!")
-        
         bot.send_message(ADMIN_ID, f"""
 📨 **YÊU CẦU THÊM {CATEGORIES.get(pending.get('category'), {}).get('name', '1 Slot')}**
 
@@ -376,14 +370,13 @@ Email: `{email}`
         bot.reply_to(message, "✅ Email đã được gửi cho admin!")
         return
 
-# ====================== WEBHOOK PAYOS (ĐÃ SỬA) ======================
+# ====================== WEBHOOK ======================
 flask_app = Flask(__name__)
 
 @flask_app.route('/payos-webhook', methods=['POST'])
 def payos_webhook():
     try:
-        # Sửa theo đúng cách verify của PayOS SDK
-        webhook_body = request.get_data()
+        webhook_body = request.get_data()  # Raw body
         webhook_data = payos.webhooks.verify(webhook_body)
 
         if webhook_data.success and getattr(webhook_data.data, 'code', None) == '00':
@@ -405,9 +398,7 @@ Số tiền: +{amount:,}đ
 Số dư hiện tại: {get_user(user_id)['balance']:,}đ
                 """)
                 notify_admin(order, is_auto=True)
-                print(f"[WEBHOOK] Thành công - Cộng {amount}đ cho user {user_id} - Đơn #{order_code}")
-            else:
-                print(f"[WEBHOOK] Không tìm thấy đơn #{order_code}")
+                print(f"[WEBHOOK SUCCESS] Cộng {amount}đ cho user {user_id} - Đơn #{order_code}")
         return jsonify({"success": True}), 200
     except Exception as e:
         print("Webhook error:", str(e))
@@ -417,7 +408,7 @@ Số dư hiện tại: {get_user(user_id)['balance']:,}đ
 def home():
     return "Bot is alive ✅"
 
-# ====================== CHẠY BOT ======================
+# ====================== CHẠY ======================
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
@@ -425,13 +416,15 @@ def run_flask():
 if __name__ == "__main__":
     if WEBHOOK_URL:
         try:
-            payos.webhooks.confirm(f"{WEBHOOK_URL}/payos-webhook")
-            print(f"✅ Webhook đã confirm: {WEBHOOK_URL}/payos-webhook")
+            confirm_url = f"{WEBHOOK_URL}/payos-webhook"
+            payos.webhooks.confirm(confirm_url)
+            print(f"✅ Webhook confirmed thành công: {confirm_url}")
         except Exception as e:
-            print("Lỗi confirm webhook:", str(e))
+            print(f"❌ Lỗi confirm webhook: {str(e)}")
+            print("→ Kiểm tra WEBHOOK_URL có đúng và service đã live chưa.")
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     time.sleep(2)
-    print("🚀 Bot đang chạy với Webhook nạp tự động...")
+    print("🚀 Bot đang chạy...")
     bot.infinity_polling()
