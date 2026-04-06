@@ -5,7 +5,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from payos import PayOS
-from payos.types import CreatePaymentLinkRequest  # Chỉ import cái này, bỏ WebhookType, WebhookDataType
+from payos.types import CreatePaymentLinkRequest
 from flask import Flask, request, jsonify
 import threading
 import time
@@ -473,7 +473,9 @@ Email: `{email}`
         bot.reply_to(message, "✅ Email đã được gửi cho admin!")
         return
 
-# ================== WEBHOOK XỬ LÝ THANH TOÁN TỰ ĐỘNG ==================
+# ================== FLASK + WEBHOOK ==================
+flask_app = Flask(__name__)
+
 def process_payment_success(data):
     """Xử lý khi thanh toán thành công"""
     try:
@@ -614,9 +616,6 @@ def webhook_handler():
     except Exception as e:
         print(f"Lỗi webhook: {e}")
         return jsonify({"error": str(e)}), 500
-
-# ================== FLASK + POLLING ==================
-flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
