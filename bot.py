@@ -24,7 +24,7 @@ client = MongoClient(os.getenv('MONGO_URI'))
 db = client['ban_taikhoan_pro']
 
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Phải là: https://banhangtelegram01.onrender.com
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')   # https://banhangtelegram01.onrender.com
 
 users = db['users']
 orders = db['orders']
@@ -262,7 +262,7 @@ Số tiền: **{amount:,}đ**
 🔗 [Thanh toán ngay]({payment_link.checkout_url})
     """, parse_mode='Markdown')
 
-# ====================== MUA HÀNG & EMAIL ======================
+# ====================== MUA HÀNG ======================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
@@ -376,7 +376,7 @@ flask_app = Flask(__name__)
 @flask_app.route('/payos-webhook', methods=['POST'])
 def payos_webhook():
     try:
-        webhook_body = request.get_data()  # Raw body
+        webhook_body = request.get_data()
         webhook_data = payos.webhooks.verify(webhook_body)
 
         if webhook_data.success and getattr(webhook_data.data, 'code', None) == '00':
@@ -398,7 +398,7 @@ Số tiền: +{amount:,}đ
 Số dư hiện tại: {get_user(user_id)['balance']:,}đ
                 """)
                 notify_admin(order, is_auto=True)
-                print(f"[WEBHOOK SUCCESS] Cộng {amount}đ cho user {user_id} - Đơn #{order_code}")
+                print(f"[WEBHOOK] Thành công - Cộng {amount}đ cho user {user_id}")
         return jsonify({"success": True}), 200
     except Exception as e:
         print("Webhook error:", str(e))
@@ -408,7 +408,7 @@ Số dư hiện tại: {get_user(user_id)['balance']:,}đ
 def home():
     return "Bot is alive ✅"
 
-# ====================== CHẠY ======================
+# ====================== CHẠY BOT ======================
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
@@ -421,7 +421,8 @@ if __name__ == "__main__":
             print(f"✅ Webhook confirmed thành công: {confirm_url}")
         except Exception as e:
             print(f"❌ Lỗi confirm webhook: {str(e)}")
-            print("→ Kiểm tra WEBHOOK_URL có đúng và service đã live chưa.")
+            print("→ Đây là lỗi phổ biến. Bot vẫn chạy bình thường.")
+            print("→ Sau khi service live ổn định (1-2 phút), bạn có thể thử redeploy lại.")
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
