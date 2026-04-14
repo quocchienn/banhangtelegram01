@@ -1,4 +1,3 @@
-
 import telebot
 import random
 import os
@@ -30,7 +29,7 @@ orders = db['orders']
 stocks = db['stocks']
 categories = db['categories']
 
-RATE_USDT_VND = 26350  # Tỷ giá USDT → VND
+RATE_USDT_VND = 26150  # Tỷ giá USDT → VND
 
 CATEGORIES = {
     "hotspot": {"name_vi": "Hotspot Shield 7D", "name_en": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
