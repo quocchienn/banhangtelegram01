@@ -24,13 +24,12 @@ db = client['ban_taikhoan_pro']
 
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 ADMIN_BINANCE_ID = os.getenv('ADMIN_BINANCE_ID', '1163285604')
-USDT_RATE = int(os.getenv('USDT_RATE', 27000))  # 1 USDT = 27000 VND
+USDT_RATE = int(os.getenv('USDT_RATE', 27000))
 
 users = db['users']
 orders = db['orders']
 stocks = db['stocks']
 categories = db['categories']
-transfers = db['transfers']
 
 CATEGORIES = {
     "hotspot": {"name": "Hotspot Shield 7D", "name_en": "Hotspot Shield 7D", "price": 2000, "price_usdt": 0.08, "type": "normal"},
@@ -57,18 +56,12 @@ LANGUAGES = {
         "lang_vi": "🇻🇳 Tiếng Việt",
         "lang_en": "🇬🇧 English",
         "wallet": "💰 Ví của tôi",
-        "deposit": "💳 Nạp tiền vào ví",
+        "deposit": "💳 Nạp tiền VND",
         "deposit_usdt": "💵 Nạp USDT qua Binance",
-        "transfer": "💸 Chuyển tiền Binance",
         "buy": "🛒 Mua {name} - {price}",
         "out_of_stock": "{name} - 🔒 Hết hàng",
-        "balance": "💰 **Số dư:** `{balance:,}đ`",
         "insufficient": "❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {balance:,}đ",
         "insufficient_usdt": "❌ Số dư USDT không đủ!\nCần {price} USDT\nHiện có: {balance} USDT",
-        "transfer_prompt": "💸 Nhập ID Binance và số USDT muốn chuyển (tối thiểu 1 USDT):\nVí dụ: `1163285604 5`",
-        "transfer_success": "✅ Đã gửi yêu cầu chuyển {amount} USDT đến ID Binance `{binance_id}`\nAdmin sẽ xác nhận sớm!",
-        "transfer_error": "❌ Định dạng không đúng! Vui lòng nhập: `<ID_Binance> <số_USDT>`\nVí dụ: `1163285604 5`",
-        "transfer_min": "❌ Số USDT tối thiểu là 1!",
         "deposit_usdt_prompt": "💵 Nhập số USDT muốn nạp (tối thiểu 1 USDT):",
         "deposit_usdt_min": "❌ Số USDT tối thiểu là 1!",
         "deposit_usdt_invalid": "❌ Vui lòng nhập số hợp lệ!",
@@ -83,16 +76,10 @@ LANGUAGES = {
         "wallet": "💰 My Wallet",
         "deposit": "💳 Deposit VND",
         "deposit_usdt": "💵 Deposit USDT via Binance",
-        "transfer": "💸 Binance Transfer",
         "buy": "🛒 Buy {name} - {price} USDT",
         "out_of_stock": "{name} - 🔒 Out of Stock",
-        "balance": "💰 **Balance:** `{balance} USDT`",
         "insufficient": "❌ Insufficient balance!\nNeed {price} USDT\nCurrent: {balance} USDT",
         "insufficient_usdt": "❌ Insufficient USDT balance!\nNeed {price} USDT\nCurrent: {balance} USDT",
-        "transfer_prompt": "💸 Enter Binance ID and USDT amount (min 1 USDT):\nExample: `1163285604 5`",
-        "transfer_success": "✅ Transfer request of {amount} USDT to Binance ID `{binance_id}` sent!\nAdmin will confirm soon!",
-        "transfer_error": "❌ Invalid format! Please enter: `<Binance_ID> <USDT_amount>`\nExample: `1163285604 5`",
-        "transfer_min": "❌ Minimum transfer amount is 1 USDT!",
         "deposit_usdt_prompt": "💵 Enter the USDT amount to deposit (minimum 1 USDT):",
         "deposit_usdt_min": "❌ Minimum deposit is 1 USDT!",
         "deposit_usdt_invalid": "❌ Please enter a valid number!",
@@ -160,16 +147,6 @@ User ID: `{order['user_id']}`
 Tên/Name: {user.get('first_name', 'N/A')}
 Số USDT: **{order.get('amount_usdt', 0)} USDT** (~{order.get('amount_vnd', 0):,}đ)
 Trạng thái/Status: Chờ thanh toán/Pending
-        """
-    elif order["type"] == "transfer_binance":
-        text = f"""
-💸 **YÊU CẦU CHUYỂN TIỀN BINANCE**
-Mã/Code: #{order['order_code']}
-User ID: `{order['user_id']}`
-Tên/Name: {user.get('first_name', 'N/A')}
-Binance ID: `{order.get('binance_id', 'N/A')}`
-Số USDT: **{order.get('amount_usdt', 0)} USDT**
-Trạng thái/Status: Chờ xác nhận/Pending
         """
     else:
         text = f"""
@@ -240,7 +217,6 @@ def show_main_menu(chat_id, user_id, first_name):
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'wallet'), callback_data="my_wallet"))
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'deposit'), callback_data="deposit"))
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'deposit_usdt'), callback_data="deposit_usdt"))
-    markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'transfer'), callback_data="transfer_binance"))
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'change_lang'), callback_data="change_language"))
     
     bot.send_message(
@@ -265,8 +241,6 @@ def callback_handler(call):
             deposit_menu(call)
         elif call.data == "deposit_usdt":
             deposit_usdt_prompt(call)
-        elif call.data == "transfer_binance":
-            transfer_binance_prompt(call)
         elif call.data == "back_to_menu":
             show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name)
         elif call.data.startswith("deposit_"):
@@ -277,6 +251,8 @@ def callback_handler(call):
             lang = get_lang(call.from_user.id)
             bot.send_message(call.message.chat.id, 
                 "❌ Sản phẩm hiện đang hết hàng!" if lang == "vi" else "❌ Product is out of stock!")
+        elif call.data in ["confirm_reset_all", "cancel_reset_all"]:
+            handle_reset_all(call)
     except Exception as e:
         print("Lỗi callback:", e)
 
@@ -385,7 +361,7 @@ def process_deposit_usdt(message):
             "type": "deposit_usdt",
             "amount_usdt": amount_usdt,
             "amount_vnd": amount_vnd,
-            "amount": amount_vnd,  # Tương đương VND
+            "amount": amount_vnd,
             "status": "pending",
             "binance_id": ADMIN_BINANCE_ID,
             "created_at": datetime.now()
@@ -429,87 +405,6 @@ After transfer, admin will approve and credit your wallet.
     except ValueError:
         bot.reply_to(message, t(user_id, 'deposit_usdt_invalid'))
         bot.register_next_step_handler(message, process_deposit_usdt)
-
-# ================== CHUYỂN TIỀN BINANCE ==================
-def transfer_binance_prompt(call):
-    """Hiển thị hướng dẫn chuyển tiền Binance"""
-    lang = get_lang(call.from_user.id)
-    
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton(t(call.from_user.id, 'back_to_menu'), callback_data="back_to_menu"))
-    
-    bot.send_message(
-        call.message.chat.id,
-        t(call.from_user.id, 'transfer_prompt'),
-        parse_mode='Markdown',
-        reply_markup=markup
-    )
-    bot.register_next_step_handler(call.message, process_transfer_binance)
-
-def process_transfer_binance(message):
-    """Xử lý yêu cầu chuyển tiền Binance"""
-    user_id = message.from_user.id
-    lang = get_lang(user_id)
-    
-    if message.text in ["/start", "/menu", "Quay lại", "Back"]:
-        show_main_menu(message.chat.id, user_id, message.from_user.first_name)
-        return
-    
-    try:
-        parts = message.text.strip().split()
-        if len(parts) != 2:
-            return bot.reply_to(message, t(user_id, 'transfer_error'))
-        
-        binance_id = parts[0]
-        amount_usdt = float(parts[1])
-        
-        if amount_usdt < 1:
-            return bot.reply_to(message, t(user_id, 'transfer_min'))
-        
-        # Kiểm tra số dư USDT
-        user = get_user(user_id)
-        if user.get('balance_usdt', 0) < amount_usdt:
-            if lang == "vi":
-                return bot.reply_to(message, f"❌ Số dư USDT không đủ!\nCần: {amount_usdt} USDT\nHiện có: {user.get('balance_usdt', 0)} USDT")
-            else:
-                return bot.reply_to(message, f"❌ Insufficient USDT balance!\nNeed: {amount_usdt} USDT\nCurrent: {user.get('balance_usdt', 0)} USDT")
-        
-        # Tạo mã chuyển tiền
-        transfer_code = generate_order_code()
-        
-        transfer_data = {
-            "transfer_code": transfer_code,
-            "user_id": user_id,
-            "binance_id": binance_id,
-            "amount_usdt": amount_usdt,
-            "status": "pending",
-            "created_at": datetime.now()
-        }
-        transfers.insert_one(transfer_data)
-        
-        # Tạo order record
-        order = {
-            "order_code": transfer_code,
-            "user_id": user_id,
-            "type": "transfer_binance",
-            "binance_id": binance_id,
-            "amount_usdt": amount_usdt,
-            "amount": int(amount_usdt * USDT_RATE),
-            "status": "pending",
-            "created_at": datetime.now()
-        }
-        orders.insert_one(order)
-        
-        # Thông báo cho admin
-        notify_admin(order)
-        
-        bot.reply_to(
-            message,
-            t(user_id, 'transfer_success', amount=amount_usdt, binance_id=binance_id)
-        )
-        
-    except ValueError:
-        bot.reply_to(message, t(user_id, 'transfer_error'))
 
 # ================== NẠP TIỀN VND ==================
 def deposit_menu(call):
@@ -634,12 +529,10 @@ def handle_buy(call):
         price = info["price"]
         currency = "vnd"
         balance = user.get("balance", 0)
-        price_display = f"{price:,}đ"
     else:
         price = info["price_usdt"]
         currency = "usdt"
         balance = user.get("balance_usdt", 0)
-        price_display = f"{price} USDT"
 
     if code in ["canva1slot", "youtube1slot"]:
         if balance < price:
@@ -790,22 +683,21 @@ Remaining balance: {new_balance} USDT
 def admin_help(message):
     """Hiển thị danh sách lệnh admin"""
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     
     help_text = """
 🔧 **ADMIN COMMANDS**
 
 📊 **Quản lý user:**
 /users - Xem danh sách số dư
+/balance - Xem danh sách số dư (alias)
 /resetbalance <user_id> - Reset số dư 1 user
 /resetallbalance - Reset tất cả số dư
 /addbalance <user_id> <số> [vnd|usdt] - Cộng tiền
 
-💰 **Quản lý nạp/rút:**
+💰 **Quản lý nạp:**
 /duyetnap <mã> - Duyệt nạp VND
 /duyetnapusdt <mã> - Duyệt nạp USDT
-/duyetchuyen <mã> - Duyệt chuyển Binance
-/huy_chuyen <mã> <lý do> - Từ chối chuyển
 
 📦 **Quản lý đơn hàng:**
 /giao <mã> - Giao tài khoản
@@ -817,10 +709,10 @@ def admin_help(message):
     """
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
-@bot.message_handler(commands=['users'])
+@bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     
     all_users = users.find().sort("balance", -1)
     text = "📊 **DANH SÁCH SỐ DƯ USER**\n\n"
@@ -833,21 +725,26 @@ def admin_view_balances(message):
         text += f"👤 {name} (ID: `{u['user_id']}`) [{lang.upper()}]\n"
         text += f"   💰 VND: `{balance_vnd:,}đ` | 💵 USDT: `{balance_usdt}`\n\n"
     
+    if not text.strip():
+        text = "Chưa có user nào."
+    
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['duyetnap'])
 def admin_duyet_nap(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>")
+            bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>")
+            return
         
         order_code = int(parts[1])
         order = orders.find_one({"order_code": order_code, "type": "deposit", "status": "pending"})
         if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn nạp pending!")
+            bot.reply_to(message, "❌ Không tìm thấy đơn nạp pending!")
+            return
         
         user_id = order['user_id']
         amount = order['amount']
@@ -870,16 +767,18 @@ def admin_duyet_nap(message):
 def admin_duyet_nap_usdt(message):
     """Admin duyệt nạp USDT"""
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /duyetnapusdt <mã đơn>")
+            bot.reply_to(message, "Sử dụng: /duyetnapusdt <mã đơn>")
+            return
         
         order_code = int(parts[1])
         order = orders.find_one({"order_code": order_code, "type": "deposit_usdt", "status": "pending"})
         if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn nạp USDT pending!")
+            bot.reply_to(message, "❌ Không tìm thấy đơn nạp USDT pending!")
+            return
         
         user_id = order['user_id']
         amount_usdt = order['amount_usdt']
@@ -899,119 +798,29 @@ def admin_duyet_nap_usdt(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {e}\nSử dụng: /duyetnapusdt <mã đơn>")
 
-@bot.message_handler(commands=['duyetchuyen'])
-def admin_duyet_chuyen(message):
-    """Admin xác nhận chuyển tiền Binance"""
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /duyetchuyen <mã yêu cầu>")
-        
-        transfer_code = int(parts[1])
-        transfer_data = transfers.find_one({"transfer_code": transfer_code, "status": "pending"})
-        
-        if not transfer_data:
-            return bot.reply_to(message, "❌ Không tìm thấy yêu cầu chuyển tiền pending!")
-        
-        user_id = transfer_data['user_id']
-        amount_usdt = transfer_data['amount_usdt']
-        binance_id = transfer_data['binance_id']
-        
-        # Trừ USDT từ tài khoản user
-        user = get_user(user_id)
-        if user.get('balance_usdt', 0) < amount_usdt:
-            return bot.reply_to(message, f"❌ User không đủ USDT! Hiện có: {user.get('balance_usdt', 0)} USDT")
-        
-        update_balance(user_id, -amount_usdt, "usdt")
-        
-        # Cập nhật trạng thái
-        transfers.update_one(
-            {"transfer_code": transfer_code},
-            {"$set": {"status": "completed", "approved_at": datetime.now(), "approved_by": ADMIN_ID}}
-        )
-        orders.update_one(
-            {"order_code": transfer_code, "type": "transfer_binance"},
-            {"$set": {"status": "completed"}}
-        )
-        
-        # Thông báo cho user
-        user_lang = get_lang(user_id)
-        if user_lang == "vi":
-            msg = f"✅ Yêu cầu chuyển {amount_usdt} USDT đến Binance ID `{binance_id}` đã được xác nhận và thực hiện!"
-        else:
-            msg = f"✅ Transfer request of {amount_usdt} USDT to Binance ID `{binance_id}` has been confirmed and executed!"
-        
-        bot.send_message(user_id, msg, parse_mode='Markdown')
-        bot.reply_to(message, f"✅ Đã duyệt chuyển tiền #{transfer_code} - {amount_usdt} USDT")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {e}\nSử dụng: /duyetchuyen <mã yêu cầu>")
-
-@bot.message_handler(commands=['huy_chuyen'])
-def admin_huy_chuyen(message):
-    """Admin từ chối yêu cầu chuyển tiền Binance"""
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
-    
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /huy_chuyen <mã yêu cầu> <lý do>")
-        
-        transfer_code = int(parts[1])
-        reason = parts[2] if len(parts) > 2 else "Không có lý do / No reason provided"
-        
-        transfer_data = transfers.find_one({"transfer_code": transfer_code, "status": "pending"})
-        
-        if not transfer_data:
-            return bot.reply_to(message, "❌ Không tìm thấy yêu cầu chuyển tiền pending!")
-        
-        transfers.update_one(
-            {"transfer_code": transfer_code},
-            {"$set": {"status": "rejected", "rejected_at": datetime.now(), "reason": reason}}
-        )
-        orders.update_one(
-            {"order_code": transfer_code, "type": "transfer_binance"},
-            {"$set": {"status": "rejected"}}
-        )
-        
-        user_id = transfer_data['user_id']
-        user_lang = get_lang(user_id)
-        
-        if user_lang == "vi":
-            msg = f"❌ Yêu cầu chuyển tiền #{transfer_code} đã bị từ chối.\nLý do: {reason}"
-        else:
-            msg = f"❌ Transfer request #{transfer_code} has been rejected.\nReason: {reason}"
-        
-        bot.send_message(user_id, msg)
-        bot.reply_to(message, f"✅ Đã từ chối chuyển tiền #{transfer_code}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {e}\nSử dụng: /huy_chuyen <mã yêu cầu> <lý do>")
-
 @bot.message_handler(commands=['giao'])
 def admin_giao(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /giao <mã đơn>")
+            bot.reply_to(message, "Sử dụng: /giao <mã đơn>")
+            return
         
         order_code = int(parts[1])
         order = orders.find_one({"order_code": order_code})
         if not order:
-            return bot.reply_to(message, "❌ Không tìm thấy đơn!")
+            bot.reply_to(message, "❌ Không tìm thấy đơn!")
+            return
         
         category = order.get("category")
         user_id = order["user_id"]
         stock_doc = stocks.find_one({"category": category})
         
         if not stock_doc or not stock_doc.get("accounts"):
-            return bot.reply_to(message, "❌ Hết stock loại này!")
+            bot.reply_to(message, "❌ Hết stock loại này!")
+            return
         
         account = stock_doc["accounts"].pop(0)
         stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
@@ -1045,11 +854,12 @@ Account: `{account}`
 @bot.message_handler(commands=['resetbalance'])
 def admin_reset_balance(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /resetbalance <user_id>")
+            bot.reply_to(message, "Sử dụng: /resetbalance <user_id>")
+            return
         
         user_id = int(parts[1])
         old_vnd = get_user(user_id)['balance']
@@ -1064,18 +874,20 @@ def admin_reset_balance(message):
 def admin_add_balance(message):
     """Admin cộng tiền cho user"""
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     try:
         parts = message.text.split()
         if len(parts) < 3:
-            return bot.reply_to(message, "Sử dụng: /addbalance <user_id> <số_tiền> [vnd|usdt]")
+            bot.reply_to(message, "Sử dụng: /addbalance <user_id> <số_tiền> [vnd|usdt]")
+            return
         
         user_id = int(parts[1])
         amount = float(parts[2]) if '.' in parts[2] else int(parts[2])
         currency = parts[3].lower() if len(parts) > 3 else "vnd"
         
         if currency not in ["vnd", "usdt"]:
-            return bot.reply_to(message, "Currency phải là 'vnd' hoặc 'usdt'")
+            bot.reply_to(message, "Currency phải là 'vnd' hoặc 'usdt'")
+            return
         
         update_balance(user_id, amount, currency)
         
@@ -1090,13 +902,12 @@ def admin_add_balance(message):
 @bot.message_handler(commands=['resetallbalance'])
 def admin_reset_all_balance(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận reset tất cả", callback_data="confirm_reset_all"))
     markup.add(telebot.types.InlineKeyboardButton("❌ Hủy", callback_data="cancel_reset_all"))
     bot.reply_to(message, "⚠️ Bạn sắp reset số dư về 0 cho **TẤT CẢ** user (cả VND và USDT). Xác nhận?", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_reset_all", "cancel_reset_all"])
 def handle_reset_all(call):
     if call.from_user.id != ADMIN_ID:
         return
@@ -1109,14 +920,14 @@ def handle_reset_all(call):
 @bot.message_handler(commands=['resetcanva1'])
 def admin_reset_canva1(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     stocks.update_one({"category": "canva1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 100}}, upsert=True)
     bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot**!")
 
 @bot.message_handler(commands=['resetyoutube'])
 def admin_reset_youtube(message):
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     stocks.update_one({"category": "youtube1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 10}}, upsert=True)
     bot.reply_to(message, "✅ Đã reset YouTube 1 Slot về **10 slot**!")
 
@@ -1125,11 +936,12 @@ def admin_set_usdt_rate(message):
     """Admin cập nhật tỷ giá USDT"""
     global USDT_RATE
     if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
+        return
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            return bot.reply_to(message, "Sử dụng: /setusdtrate <tỷ_giá>")
+            bot.reply_to(message, "Sử dụng: /setusdtrate <tỷ_giá>")
+            return
         
         new_rate = int(parts[1])
         USDT_RATE = new_rate
@@ -1200,4 +1012,5 @@ if __name__ == "__main__":
     print("🤖 Bot đang chạy...")
     print(f"📊 Tỷ giá USDT: 1 USDT = {USDT_RATE:,}đ")
     print(f"👑 Admin Binance ID: {ADMIN_BINANCE_ID}")
+    print(f"🆔 Admin Telegram ID: {ADMIN_ID}")
     bot.infinity_polling()
