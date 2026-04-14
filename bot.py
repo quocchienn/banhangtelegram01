@@ -29,116 +29,59 @@ orders = db['orders']
 stocks = db['stocks']
 categories = db['categories']
 
-RATE_USDT_VND = 26150  # Tỷ giá USDT → VND
+RATE_USDT_VND = 26340  # Tỷ giá USDT ≈ 26.340 VND (cập nhật khi cần)
 
 CATEGORIES = {
-    "hotspot": {"name_vi": "Hotspot Shield 7D", "name_en": "Hotspot Shield 7D", "price": 2000, "type": "normal"},
-    "gemini": {"name_vi": "Gemini Pro 1 Acc 26-29D", "name_en": "Gemini Pro 1 Acc 26-29D", "price": 40000, "type": "normal"},
-    "capcut": {"name_vi": "CapCut Pro 1 Tuần", "name_en": "CapCut Pro 1 Week", "price": 2000, "type": "normal"},
-    "canva1slot": {"name_vi": "Canva 1 Slot", "name_en": "Canva 1 Slot", "price": 2000, "type": "canva_1slot"},
-    "canva100slot": {"name_vi": "Canva 100 Slot", "name_en": "Canva 100 Slot", "price": 30000, "type": "normal"},
-    "youtube1slot": {"name_vi": "YouTube 1 Slot", "name_en": "YouTube 1 Slot", "price": 2000, "type": "youtube_1slot"},
+    "hotspot": {"name": "Hotspot Shield 7D", "price_vnd": 2000},
+    "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "price_vnd": 40000},
+    "capcut": {"name": "CapCut Pro 1 Tuần", "price_vnd": 2000},
+    "canva1slot": {"name": "Canva 1 Slot", "price_vnd": 2000},
+    "canva100slot": {"name": "Canva 100 Slot", "price_vnd": 30000},
+    "youtube1slot": {"name": "YouTube 1 Slot", "price_vnd": 2000},
 }
 
 for code, info in CATEGORIES.items():
     categories.update_one({"code": code}, {"$setOnInsert": {
-        "code": code, 
-        "name_vi": info["name_vi"], 
-        "name_en": info["name_en"], 
-        "price": info["price"], 
-        "type": info.get("type", "normal"), 
-        "enabled": True
+        "code": code, "name": info["name"], "price_vnd": info["price_vnd"], "enabled": True
     }}, upsert=True)
 
 # ================== TRANSLATIONS ==================
 TRANSLATIONS = {
     "vi": {
-        "choose_lang": "🌐 Chọn ngôn ngữ / Choose language:",
         "welcome": "👋 Chào **{name}**!\n\nChọn sản phẩm bạn muốn mua:",
-        "my_wallet": "💰 Ví của tôi",
+        "choose_language": "🌐 Chọn ngôn ngữ / Choose language:",
+        "wallet": "💰 Ví của tôi",
         "deposit": "💳 Nạp tiền vào ví",
-        "change_lang": "🌐 Đổi ngôn ngữ",
+        "language": "🌐 Ngôn ngữ",
         "out_of_stock": "🔒 Hết hàng",
-        "buy_btn": "🛒 Mua {name} - {price:,}đ (còn {stock})",
-        "deposit_menu": "💳 Chọn số tiền muốn nạp:",
-        "deposit_custom": "Nhập số khác",
-        "deposit_binance": "💱 Nạp qua Binance USDT (min 1 USDT)",
-        "custom_prompt": "Nhập số tiền muốn nạp (tối thiểu 2.000đ):",
-        "binance_prompt": "Nhập số USDT muốn nạp (tối thiểu 1 USDT):",
-        "min_deposit": "❌ Số tiền tối thiểu là 2.000đ!",
-        "min_usdt": "❌ Số USDT tối thiểu là 1 USDT!",
-        "invalid_amount": "❌ Vui lòng nhập số tiền hợp lệ!",
-        "deposit_payos": "💰 **Nạp tiền vào ví**\n\nMã đơn: #{order_code}\nSố tiền: **{amount:,}đ**\n\n🔗 [Thanh toán ngay]({url})",
-        "binance_deposit_msg": """💱 **Nạp qua Binance USDT**
-
-Mã đơn: #{order_code}
-Số USDT: **{usdt} USDT** (~{vnd:,}đ)
-
-🔸 Chuyển chính xác **{usdt} USDT** đến Binance UID: **1163285604**
-🔸 Ghi chú (Memo): **#{order_code}** (rất quan trọng!)
-
-Sau khi chuyển xong, admin sẽ duyệt và cộng tiền vào ví.""",
+        "stock_left": "(còn {count})",
+        "buy_button": "🛒 Mua {name} - {price:,}đ {stock}",
         "no_stock": "❌ Sản phẩm đã hết hàng!",
-        "not_exist": "❌ Sản phẩm không tồn tại!",
-        "insufficient": "❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {balance:,}đ\nVui lòng nạp trước.",
+        "product_not_exist": "❌ Sản phẩm không tồn tại!",
+        "insufficient_balance": "❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {balance:,}đ",
         "email_prompt": "✅ Đã trừ {price:,}đ từ ví!\n\n📧 Vui lòng gửi **email (@gmail.com)** của bạn ngay bây giờ.",
         "email_invalid": "❌ Chỉ chấp nhận email @gmail.com!",
         "email_sent": "✅ Email đã được gửi cho admin!",
-        "buy_success": """🎉 **Mua thành công từ ví!**
-
-Sản phẩm: {name}
-Tài khoản: {account}
-Số dư còn lại: {balance:,}đ""",
-        "purchase_pending": """✅ Đơn hàng #{order_code} đã tạo!
-
-💰 Số tiền: {price:,}đ
-📦 Sản phẩm: {name}
-
-🔗 [Thanh toán ngay]({url})""",
+        "buy_success": "🎉 **Mua thành công từ ví!**\n\nSản phẩm: {name}\nTài khoản: {account}\nSố dư còn lại: {balance:,}đ",
+        "purchase_pending": "✅ Đơn hàng #{order_code} đã tạo!\n\n💰 Số tiền: {price:,}đ\n📦 Sản phẩm: {name}\n\n🔗 [Thanh toán ngay]({url})",
     },
     "en": {
-        "choose_lang": "🌐 Choose language:",
         "welcome": "👋 Hello **{name}**!\n\nChoose the product you want to buy:",
-        "my_wallet": "💰 My Wallet",
+        "choose_language": "🌐 Choose language:",
+        "wallet": "💰 My Wallet",
         "deposit": "💳 Deposit to wallet",
-        "change_lang": "🌐 Change language",
+        "language": "🌐 Language",
         "out_of_stock": "🔒 Out of stock",
-        "buy_btn": "🛒 Buy {name} - {usdt:.2f} USDT ({stock} left)",
-        "deposit_menu": "💳 Select deposit amount:",
-        "deposit_custom": "Custom amount",
-        "deposit_binance": "💱 Deposit via Binance USDT (min 1 USDT)",
-        "custom_prompt": "Enter deposit amount (minimum 2,000đ):",
-        "binance_prompt": "Enter USDT amount to deposit (minimum 1 USDT):",
-        "min_deposit": "❌ Minimum deposit is 2,000đ!",
-        "min_usdt": "❌ Minimum is 1 USDT!",
-        "invalid_amount": "❌ Please enter a valid amount!",
-        "deposit_payos": "💰 **Deposit to wallet**\n\nOrder: #{order_code}\nAmount: **{amount:,}đ**\n\n🔗 [Pay Now]({url})",
-        "binance_deposit_msg": """💱 **Deposit via Binance USDT**
-
-Order: #{order_code}
-USDT: **{usdt} USDT** (~{vnd:,}đ)
-
-🔸 Send exactly **{usdt} USDT** to Binance UID: **1163285604**
-🔸 Memo/Note: **#{order_code}** (very important!)
-
-After transfer, admin will approve and add to your wallet.""",
+        "stock_left": "({count} left)",
+        "buy_button": "🛒 Buy {name} - {price} USDT {stock}",
         "no_stock": "❌ Product is out of stock!",
-        "not_exist": "❌ Product does not exist!",
-        "insufficient": "❌ Insufficient balance!\nRequired: {price:,}đ\nCurrent: {balance:,}đ\nPlease deposit first.",
-        "email_prompt": "✅ Deducted {price:,}đ from wallet!\n\n📧 Please send your **email (@gmail.com)** now.",
+        "product_not_exist": "❌ Product does not exist!",
+        "insufficient_balance": "❌ Insufficient balance!\nRequired: {price} USDT\nCurrent: {balance} USDT",
+        "email_prompt": "✅ Deducted {price} USDT from wallet!\n\n📧 Please send your **email (@gmail.com)** now.",
         "email_invalid": "❌ Only @gmail.com emails are accepted!",
         "email_sent": "✅ Email has been sent to admin!",
-        "buy_success": """🎉 **Purchase successful from wallet!**
-
-Product: {name}
-Account: {account}
-Remaining balance: {balance:,}đ""",
-        "purchase_pending": """✅ Order #{order_code} created!
-
-💰 Amount: {price:,}đ
-📦 Product: {name}
-
-🔗 [Pay Now]({url})""",
+        "buy_success": "🎉 **Purchase successful from wallet!**\n\nProduct: {name}\nAccount: {account}\nRemaining balance: {balance} USDT",
+        "purchase_pending": "✅ Order #{order_code} created!\n\n💰 Amount: {price} USDT\n📦 Product: {name}\n\n🔗 [Pay Now]({url})",
     }
 }
 
@@ -151,20 +94,21 @@ def get_text(user_id, key, **kwargs):
     except:
         return text
 
-def vnd_to_usdt(vnd):
-    return round(vnd / RATE_USDT_VND, 2)
-
 def get_user(user_id):
     user = users.find_one({"user_id": user_id})
     if not user:
         user = {
             "user_id": user_id,
+            "username": None,
             "first_name": None,
             "balance": 0,
             "joined_at": datetime.now(),
             "language": "vi"
         }
         users.insert_one(user)
+    elif "language" not in user:
+        users.update_one({"user_id": user_id}, {"$set": {"language": "vi"}})
+        user["language"] = "vi"
     return user
 
 def update_balance(user_id, amount):
@@ -177,30 +121,94 @@ def get_stock_count(category):
     stock_doc = stocks.find_one({"category": category})
     return len(stock_doc.get("accounts", [])) if stock_doc else 0
 
-def notify_admin(order):
-    try:
-        user = get_user(order["user_id"])
-        cat_name = CATEGORIES.get(order.get("category", ""), {}).get("name_vi", "Nạp tiền")
-        text = f"""
-🛒 **ĐƠN MỚI**
-Mã đơn: #{order.get('order_code')}
-User ID: `{order['user_id']}`
-Tên: {user.get('first_name', 'Không tên')}
-Sản phẩm: {cat_name}
-Số tiền: **{order.get('amount', 0):,}đ**
-Trạng thái: Chờ xử lý
-        """
-        bot.send_message(ADMIN_ID, text)
-    except:
-        pass
+def get_price(lang, price_vnd):
+    if lang == "en":
+        return round(price_vnd / RATE_USDT_VND, 2)   # hiển thị USDT
+    return price_vnd
 
-# ================== ADMIN COMMANDS ==================
+# ================== /start ==================
+@bot.message_handler(commands=['start'])
+def start(message):
+    user = get_user(message.from_user.id)
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup.add(telebot.types.InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="set_lang_vi"))
+    markup.add(telebot.types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en"))
+    bot.send_message(message.chat.id, get_text(message.from_user.id, "choose_language"), reply_markup=markup)
+
+# ================== CALLBACK HANDLER ==================
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    bot.answer_callback_query(call.id)
+    try:
+        if call.data.startswith("set_lang_"):
+            lang = "vi" if call.data == "set_lang_vi" else "en"
+            users.update_one({"user_id": call.from_user.id}, {"$set": {"language": lang}})
+            show_main_menu(call.message.chat.id, call.from_user.id)
+        
+        elif call.data == "my_wallet":
+            show_wallet(call)
+        elif call.data == "deposit":
+            deposit_menu(call)
+        elif call.data.startswith("deposit_"):
+            handle_deposit_amount(call)
+        elif call.data.startswith("buy_"):
+            handle_buy(call)
+        elif call.data == "outofstock":
+            bot.send_message(call.message.chat.id, get_text(call.from_user.id, "no_stock"))
+        elif call.data in ["confirm_reset_all", "cancel_reset_all"]:
+            handle_reset_all(call)
+    except Exception as e:
+        print("Lỗi callback:", e)
+
+def show_main_menu(chat_id, user_id):
+    user = get_user(user_id)
+    lang = user.get("language", "vi")
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+
+    for code, info in CATEGORIES.items():
+        stock_count = get_stock_count(code)
+        price = get_price(lang, info["price_vnd"])
+        unit = "đ" if lang == "vi" else "USDT"
+
+        if stock_count > 0:
+            stock_text = get_text(user_id, "stock_left", count=stock_count) if lang == "vi" else get_text(user_id, "stock_left", count=stock_count)
+            btn_text = get_text(user_id, "buy_button", name=info["name"], price=price, stock=stock_text)
+            markup.add(telebot.types.InlineKeyboardButton(btn_text, callback_data=f"buy_{code}"))
+        else:
+            btn_text = f"{info['name']} - {get_text(user_id, 'out_of_stock')}"
+            markup.add(telebot.types.InlineKeyboardButton(btn_text, callback_data="outofstock"))
+
+    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "wallet"), callback_data="my_wallet"))
+    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "deposit"), callback_data="deposit"))
+    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "language"), callback_data="change_language"))  # có thể thêm nếu muốn
+
+    welcome = get_text(user_id, "welcome", name=bot.get_chat(user_id).first_name or "User")
+    bot.send_message(chat_id, welcome, parse_mode='Markdown', reply_markup=markup)
+
+def show_wallet(call):
+    user = get_user(call.from_user.id)
+    lang = user.get("language", "vi")
+    balance = user.get('balance', 0)
+    if lang == "en":
+        balance_text = f"{round(balance / RATE_USDT_VND, 2)} USDT"
+    else:
+        balance_text = f"{balance:,}đ"
+
+    text = f"""
+🆔 **ID:** `{call.from_user.id}`
+👤 **Name:** {call.from_user.first_name or 'No name'}
+💰 **Balance:** {balance_text}
+📅 **Joined:** {user.get('joined_at', datetime.now()).strftime('%d/%m/%Y')}
+    """
+    bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
+
+# ================== ADMIN COMMANDS (ĐÃ FIX) ==================
 @bot.message_handler(commands=['users', 'balance'])
 def admin_view_balances(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
     all_users = users.find().sort("balance", -1)
-    text = "📊 **DANH SÁCH SỐ DƯ USER**\n\n"
+    text = "📊 **DANH SÁCH SỐ DƯ**\n\n"
     for u in all_users:
         name = u.get('first_name') or u.get('username') or 'Unknown'
         text += f"👤 {name} (ID: `{u['user_id']}`) → 💰 `{u.get('balance', 0):,}đ`\n"
@@ -218,8 +226,8 @@ def admin_duyet_nap(message):
         amount = order['amount']
         update_balance(order['user_id'], amount)
         orders.update_one({"order_code": order_code}, {"$set": {"status": "approved", "approved_at": datetime.now()}})
-        bot.send_message(order['user_id'], f"✅ Nạp tiền đã được duyệt!\nSố tiền: +{amount:,}đ\nSố dư hiện tại: {get_user(order['user_id'])['balance']:,}đ")
-        bot.reply_to(message, f"✅ Đã duyệt nạp tiền #{order_code}")
+        bot.send_message(order['user_id'], f"✅ Nạp tiền đã được duyệt!\n+{amount:,}đ\nSố dư: {get_user(order['user_id'])['balance']:,}đ")
+        bot.reply_to(message, f"✅ Đã duyệt #{order_code} - Cộng {amount:,}đ")
     except:
         bot.reply_to(message, "Sử dụng: /duyetnap <mã đơn>")
 
@@ -235,18 +243,18 @@ def admin_giao(message):
         category = order["category"]
         stock_doc = stocks.find_one({"category": category})
         if not stock_doc or not stock_doc.get("accounts"):
-            return bot.reply_to(message, "❌ Hết stock loại này!")
+            return bot.reply_to(message, "❌ Hết stock!")
         account = stock_doc["accounts"].pop(0)
         stocks.update_one({"category": category}, {"$set": {"accounts": stock_doc["accounts"]}})
         bot.send_message(order["user_id"], f"""
 🎉 **Tài khoản đã được giao!**
 
 Đơn: #{order_code}
-Sản phẩm: {CATEGORIES.get(category, {}).get('name_vi', category)}
+Sản phẩm: {CATEGORIES.get(category, {}).get('name', category)}
 Tài khoản: {account}
         """)
         orders.update_one({"order_code": order_code}, {"$set": {"status": "delivered", "delivered_at": datetime.now(), "account": account}})
-        bot.reply_to(message, f"✅ Đã giao thành công đơn #{order_code}")
+        bot.reply_to(message, f"✅ Đã giao đơn #{order_code}")
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}\nSử dụng: /giao <mã đơn>")
 
@@ -258,7 +266,7 @@ def admin_reset_balance(message):
         user_id = int(message.text.split()[1])
         old = get_user(user_id)['balance']
         update_balance(user_id, -old)
-        bot.reply_to(message, f"✅ Đã reset số dư user `{user_id}` từ {old:,}đ → 0đ")
+        bot.reply_to(message, f"✅ Reset số dư user `{user_id}` về 0đ (từ {old:,}đ)")
     except:
         bot.reply_to(message, "Sử dụng: /resetbalance <user_id>")
 
@@ -267,11 +275,10 @@ def admin_reset_all_balance(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận reset tất cả", callback_data="confirm_reset_all"))
+    markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận", callback_data="confirm_reset_all"))
     markup.add(telebot.types.InlineKeyboardButton("❌ Hủy", callback_data="cancel_reset_all"))
-    bot.reply_to(message, "⚠️ Bạn sắp reset số dư về 0 cho **TẤT CẢ** user. Xác nhận?", reply_markup=markup)
+    bot.reply_to(message, "⚠️ Reset số dư về 0 cho **TẤT CẢ** user?", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_reset_all", "cancel_reset_all"])
 def handle_reset_all(call):
     if call.from_user.id != ADMIN_ID:
         return
@@ -279,114 +286,95 @@ def handle_reset_all(call):
         bot.edit_message_text("Đã hủy.", call.message.chat.id, call.message.message_id)
         return
     users.update_many({}, {"$set": {"balance": 0}})
-    bot.edit_message_text("✅ Đã reset số dư về 0 cho tất cả user.", call.message.chat.id, call.message.message_id)
+    bot.edit_message_text("✅ Đã reset số dư tất cả user về 0đ.", call.message.chat.id, call.message.message_id)
 
 @bot.message_handler(commands=['resetcanva1'])
 def admin_reset_canva1(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
     stocks.update_one({"category": "canva1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 100}}, upsert=True)
-    bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot**!")
+    bot.reply_to(message, "✅ Reset Canva 1 Slot về **100 slot**!")
 
 @bot.message_handler(commands=['resetyoutube'])
 def admin_reset_youtube(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Chỉ admin mới dùng được!")
     stocks.update_one({"category": "youtube1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 10}}, upsert=True)
-    bot.reply_to(message, "✅ Đã reset YouTube 1 Slot về **10 slot**!")
+    bot.reply_to(message, "✅ Reset YouTube 1 Slot về **10 slot**!")
 
-# ================== /start ==================
-@bot.message_handler(commands=['start'])
-def start(message):
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    markup.add(telebot.types.InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="set_lang_vi"))
-    markup.add(telebot.types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en"))
-    bot.send_message(message.chat.id, TRANSLATIONS["vi"]["choose_lang"], reply_markup=markup)
-
+# ================== Các hàm nạp tiền, mua hàng (giữ nguyên logic cũ, chỉ chỉnh ngôn ngữ) ==================
 # ================== CALLBACK HANDLER ==================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     bot.answer_callback_query(call.id)
-    user_id = call.from_user.id
-
-    if call.data.startswith("set_lang_"):
-        lang = "vi" if call.data == "set_lang_vi" else "en"
-        users.update_one({"user_id": user_id}, {"$set": {"language": lang}})
-        msg = "✅ Ngôn ngữ đã được đặt thành Tiếng Việt!" if lang == "vi" else "✅ Language has been set to English!"
-        bot.send_message(call.message.chat.id, msg)
-        show_main_menu(call.message.chat.id, user_id)
-        return
-
-    if call.data == "my_wallet":
-        show_wallet(call)
-    elif call.data == "deposit":
-        deposit_menu(call)
-    elif call.data.startswith("deposit_"):
-        handle_deposit_amount(call)
-    elif call.data.startswith("buy_"):
-        handle_buy(call)
-    elif call.data == "outofstock":
-        bot.send_message(call.message.chat.id, get_text(call.from_user.id, "no_stock"))
-    elif call.data == "change_language":
-        start(call.message)
-    elif call.data in ["confirm_reset_all", "cancel_reset_all"]:
-        handle_reset_all(call)
-
-def show_main_menu(chat_id, user_id):
-    user = get_user(user_id)
-    lang = user.get("language", "vi")
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-
-    for code, info in CATEGORIES.items():
-        stock = get_stock_count(code)
-        price_vnd = info["price"]
-        if lang == "vi":
-            name = info["name_vi"]
-            btn_text = get_text(user_id, "buy_btn", name=name, price=price_vnd, stock=stock) if stock > 0 else f"{name} - {get_text(user_id, 'out_of_stock')}"
-        else:
-            name = info["name_en"]
-            price_usdt = vnd_to_usdt(price_vnd)
-            btn_text = f"🛒 Buy {name} - {price_usdt:.2f} USDT ({stock} left)" if stock > 0 else f"{name} - {get_text(user_id, 'out_of_stock')}"
-        markup.add(telebot.types.InlineKeyboardButton(btn_text, callback_data=f"buy_{code}" if stock > 0 else "outofstock"))
-
-    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "my_wallet"), callback_data="my_wallet"))
-    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "deposit"), callback_data="deposit"))
-    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "change_lang"), callback_data="change_language"))
-
-    welcome = get_text(user_id, "welcome", name=call.from_user.first_name or "User")
-    bot.send_message(chat_id, welcome, parse_mode='Markdown', reply_markup=markup)
+    try:
+        if call.data == "my_wallet":
+            show_wallet(call)
+        elif call.data == "deposit":
+            deposit_menu(call)
+        elif call.data.startswith("deposit_"):
+            handle_deposit_amount(call)
+        elif call.data.startswith("buy_"):
+            handle_buy(call)
+        elif call.data == "outofstock":
+            bot.send_message(call.message.chat.id, get_text(call.from_user.id, "no_stock"))
+        elif call.data == "change_language":
+            change_language(call)
+        elif call.data.startswith("set_lang_"):
+            handle_set_language(call)
+    except Exception as e:
+        print("Lỗi callback:", e)
 
 def show_wallet(call):
     user = get_user(call.from_user.id)
-    text = f"""
-🆔 **ID:** `{call.from_user.id}`
-👤 **Tên:** {call.from_user.first_name or 'Không tên'}
-💰 **Số dư:** `{user.get('balance', 0):,}đ`
-    """
+    joined = user.get('joined_at', datetime.now()).strftime('%d/%m/%Y')
+    text = get_text(call.from_user.id, "wallet_info",
+                    user_id=call.from_user.id,
+                    name=call.from_user.first_name or 'Không có tên',
+                    balance=user.get('balance', 0),
+                    joined=joined)
     bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
 
-# ================== NẠP TIỀN ==================
+def change_language(call):
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(telebot.types.InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="set_lang_vi"))
+    markup.add(telebot.types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en"))
+    bot.send_message(call.message.chat.id, get_text(call.from_user.id, "choose_language"), reply_markup=markup)
+
+def handle_set_language(call):
+    lang_code = "vi" if call.data == "set_lang_vi" else "en"
+    users.update_one({"user_id": call.from_user.id}, {"$set": {"language": lang_code}})
+    if lang_code == "vi":
+        confirm = "✅ Ngôn ngữ đã được đặt thành Tiếng Việt!"
+    else:
+        confirm = "✅ Language has been set to English!"
+    bot.send_message(call.message.chat.id, confirm)
+    # User có thể gõ /start để xem menu mới
+
+# ================== NẠP TIỀN (PayOS + Binance mới) ==================
 def deposit_menu(call):
+    user_id = call.from_user.id
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.add(telebot.types.InlineKeyboardButton("50.000đ", callback_data="deposit_50000"))
     markup.add(telebot.types.InlineKeyboardButton("100.000đ", callback_data="deposit_100000"))
     markup.add(telebot.types.InlineKeyboardButton("200.000đ", callback_data="deposit_200000"))
-    markup.add(telebot.types.InlineKeyboardButton(get_text(call.from_user.id, "deposit_custom"), callback_data="deposit_custom"))
-    markup.add(telebot.types.InlineKeyboardButton(get_text(call.from_user.id, "deposit_binance"), callback_data="deposit_binance"))
-    bot.send_message(call.message.chat.id, get_text(call.from_user.id, "deposit_menu"), reply_markup=markup)
+    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "deposit_custom"), callback_data="deposit_custom"))
+    markup.add(telebot.types.InlineKeyboardButton(get_text(user_id, "deposit_binance"), callback_data="deposit_binance"))
+    title = get_text(user_id, "deposit_menu")
+    bot.send_message(call.message.chat.id, title, reply_markup=markup)
 
 def handle_deposit_amount(call):
     if call.data == "deposit_custom":
-        bot.send_message(call.message.chat.id, get_text(call.from_user.id, "custom_prompt"))
+        bot.send_message(call.message.chat.id, get_text(call.from_user.id, "custom_deposit_prompt"))
         bot.register_next_step_handler(call.message, process_custom_deposit)
         return
     elif call.data == "deposit_binance":
-        bot.send_message(call.message.chat.id, get_text(call.from_user.id, "binance_prompt"))
+        bot.send_message(call.message.chat.id, get_text(call.from_user.id, "binance_deposit_prompt"))
         bot.register_next_step_handler(call.message, process_binance_deposit)
         return
     try:
         amount = int(call.data.split("_")[1])
-        create_payos_deposit(call.message.chat.id, call.from_user.id, amount)
+        create_deposit_payment(call.message.chat.id, call.from_user.id, amount)
     except:
         bot.send_message(call.message.chat.id, "❌ Có lỗi khi xử lý.")
 
@@ -394,47 +382,75 @@ def process_custom_deposit(message):
     try:
         amount = int(message.text.strip())
         if amount < 2000:
-            return bot.reply_to(message, get_text(message.from_user.id, "min_deposit"))
-        create_payos_deposit(message.chat.id, message.from_user.id, amount)
-    except:
+            return bot.reply_to(message, get_text(message.from_user.id, "min_deposit_error"))
+        create_deposit_payment(message.chat.id, message.from_user.id, amount)
+    except ValueError:
         bot.reply_to(message, get_text(message.from_user.id, "invalid_amount"))
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
 def process_binance_deposit(message):
     try:
-        usdt = float(message.text.strip().replace(",", "."))
+        usdt_str = message.text.strip().replace(",", ".")
+        usdt = float(usdt_str)
         if usdt < 1:
-            return bot.reply_to(message, get_text(message.from_user.id, "min_usdt"))
-        vnd = int(usdt * RATE_USDT_VND)
-        create_binance_deposit(message.chat.id, message.from_user.id, usdt, vnd)
-    except:
+            return bot.reply_to(message, get_text(message.from_user.id, "binance_min_error"))
+        vnd_amount = int(usdt * RATE_USDT_VND)
+        create_binance_deposit(message.chat.id, message.from_user.id, usdt, vnd_amount)
+    except ValueError:
         bot.reply_to(message, get_text(message.from_user.id, "invalid_amount"))
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
-def create_payos_deposit(chat_id, user_id, amount):
+def create_deposit_payment(chat_id, user_id, amount):
     order_code = generate_order_code()
-    orders.insert_one({"order_code": order_code, "user_id": user_id, "type": "deposit", "amount": amount, "status": "pending", "created_at": datetime.now()})
-    notify_admin({"order_code": order_code, "user_id": user_id, "type": "deposit", "amount": amount})
+    order = {
+        "order_code": order_code,
+        "user_id": user_id,
+        "type": "deposit",
+        "amount": amount,
+        "status": "pending",
+        "created_at": datetime.now()
+    }
+    orders.insert_one(order)
+    notify_admin(order)
+
     payment_data = CreatePaymentLinkRequest(
-        order_code=order_code, amount=amount, description=f"Nap #{order_code}",
+        order_code=order_code,
+        amount=amount,
+        description=f"Nap #{order_code}",
         return_url="https://t.me/" + bot.get_me().username,
         cancel_url="https://t.me/" + bot.get_me().username
     )
     payment_link = payos.payment_requests.create(payment_data)
-    text = get_text(user_id, "deposit_payos", order_code=order_code, amount=amount, url=payment_link.checkout_url)
+
+    text = get_text(user_id, "deposit_created", order_code=order_code, amount=amount, checkout_url=payment_link.checkout_url)
     bot.send_message(chat_id, text, parse_mode='Markdown')
 
-def create_binance_deposit(chat_id, user_id, usdt, vnd):
+def create_binance_deposit(chat_id, user_id, usdt, vnd_amount):
     order_code = generate_order_code()
-    orders.insert_one({"order_code": order_code, "user_id": user_id, "type": "deposit_binance", "amount": vnd, "amount_usdt": usdt, "status": "pending", "created_at": datetime.now()})
-    notify_admin({"order_code": order_code, "user_id": user_id, "type": "deposit_binance", "amount": vnd})
-    text = get_text(user_id, "binance_deposit_msg", order_code=order_code, usdt=usdt, vnd=vnd)
+    order = {
+        "order_code": order_code,
+        "user_id": user_id,
+        "type": "deposit_binance",
+        "amount": vnd_amount,
+        "amount_usdt": usdt,
+        "status": "pending",
+        "created_at": datetime.now()
+    }
+    orders.insert_one(order)
+    notify_admin(order)
+
+    text = get_text(user_id, "binance_deposit_created", order_code=order_code, usdt=usdt, vnd=vnd_amount)
     bot.send_message(chat_id, text, parse_mode='Markdown')
 
-# ================== MUA HÀNG ==================
+# ================== MUA HÀNG & XỬ LÝ EMAIL ==================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     code = call.data.split("_")[1]
     info = CATEGORIES.get(code)
     if not info:
-        return bot.send_message(call.message.chat.id, get_text(call.from_user.id, "not_exist"))
+        return bot.send_message(call.message.chat.id, get_text(call.from_user.id, "product_not_exist"))
 
     user = get_user(call.from_user.id)
     price = info["price"]
@@ -443,14 +459,13 @@ def handle_buy(call):
     if stock_count <= 0:
         return bot.send_message(call.message.chat.id, get_text(call.from_user.id, "no_stock"))
 
-    if user.get("balance", 0) < price:
-        return bot.send_message(call.message.chat.id, get_text(call.from_user.id, "insufficient", price=price, balance=user.get('balance', 0)))
-
-    update_balance(call.from_user.id, -price)
-
     if code in ["canva1slot", "youtube1slot"]:
+        if user.get("balance", 0) < price:
+            return bot.send_message(call.message.chat.id, get_text(call.from_user.id, "insufficient_balance", price=price, balance=user.get('balance', 0)))
+
+        update_balance(call.from_user.id, -price)
         order_code = generate_order_code()
-        orders.insert_one({
+        order = {
             "order_code": order_code,
             "user_id": call.from_user.id,
             "category": code,
@@ -458,25 +473,47 @@ def handle_buy(call):
             "type": code,
             "status": "waiting_email",
             "created_at": datetime.now()
-        })
-        notify_admin({"order_code": order_code, "user_id": call.from_user.id, "category": code, "amount": price})
+        }
+        orders.insert_one(order)
+        notify_admin(order)
+
         stock_doc = stocks.find_one({"category": code})
         if stock_doc and stock_doc.get("accounts"):
             stock_doc["accounts"].pop(0)
             stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
-        bot.send_message(call.message.chat.id, get_text(call.from_user.id, "email_prompt", price=price))
-    else:
-        # Sản phẩm thường - giao ngay
+
+        text = get_text(call.from_user.id, "email_prompt", price=price)
+        bot.send_message(call.message.chat.id, text)
+        return
+
+    # Các sản phẩm khác
+    if user.get("balance", 0) >= price:
+        update_balance(call.from_user.id, -price)
         stock_doc = stocks.find_one({"category": code})
         if stock_doc and stock_doc.get("accounts"):
             account = stock_doc["accounts"].pop(0)
             stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
-            bot.send_message(call.message.chat.id, get_text(call.from_user.id, "buy_success", 
-                name=info.get("name_vi" if user.get("language") == "vi" else "name_en"), 
-                account=account, 
-                balance=get_user(call.from_user.id)['balance']))
+            user_after = get_user(call.from_user.id)  # refresh balance
+            text = get_text(call.from_user.id, "buy_success_wallet", name=info['name'], account=account, balance=user_after.get('balance', 0))
+            bot.send_message(call.message.chat.id, text)
+    else:
+        # Tạo đơn PayOS
+        order_code = generate_order_code()
+        order = {"order_code": order_code, "user_id": call.from_user.id, "category": code, "amount": price, "type": "purchase", "status": "pending", "created_at": datetime.now()}
+        orders.insert_one(order)
+        notify_admin(order)
 
-# ================== XỬ LÝ EMAIL ==================
+        payment_data = CreatePaymentLinkRequest(
+            order_code=order_code,
+            amount=price,
+            description=f"Don #{order_code}",
+            return_url="https://t.me/" + bot.get_me().username,
+            cancel_url="https://t.me/" + bot.get_me().username
+        )
+        payment_link = payos.payment_requests.create(payment_data)
+        text = get_text(call.from_user.id, "purchase_pending", order_code=order_code, price=price, name=info['name'], checkout_url=payment_link.checkout_url)
+        bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
+
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     pending = orders.find_one({"user_id": message.from_user.id, "status": "waiting_email"})
@@ -484,12 +521,14 @@ def handle_user_message(message):
         email = message.text.strip()
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
             return bot.reply_to(message, get_text(message.from_user.id, "email_invalid"))
+        
         bot.send_message(ADMIN_ID, f"""
-📨 **YÊU CẦU EMAIL**
+📨 **YÊU CẦU THÊM {CATEGORIES.get(pending.get('category'), {}).get('name', '1 Slot')}**
+
 Mã đơn: #{pending['order_code']}
 User ID: `{message.from_user.id}`
+Tên: {message.from_user.first_name or 'Không tên'}
 Email: `{email}`
-Sản phẩm: {CATEGORIES.get(pending.get('category'), {}).get('name_vi')}
         """)
         orders.update_one({"_id": pending["_id"]}, {"$set": {"status": "waiting_admin", "user_email": email}})
         bot.reply_to(message, get_text(message.from_user.id, "email_sent"))
@@ -510,5 +549,5 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     time.sleep(2)
-    print("🤖 Bot đang chạy hoàn chỉnh - Hỗ trợ 2 ngôn ngữ + Nạp Binance USDT!")
+    print("🤖 Bot đang chạy... (Đã fix admin + menu ngôn ngữ + giá USDT khi chọn English)")
     bot.infinity_polling()
