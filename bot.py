@@ -246,41 +246,6 @@ def show_main_menu(chat_id, user_id, first_name):
         reply_markup=markup
     )
 
-# ================== CALLBACK HANDLER ==================
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    bot.answer_callback_query(call.id)
-    try:
-        if call.data.startswith("lang_"):
-            handle_language_selection(call)
-        elif call.data == "change_language":
-            change_language_menu(call)
-        elif call.data == "my_wallet":
-            show_wallet(call)
-        elif call.data == "deposit":
-            deposit_menu(call)
-        elif call.data == "deposit_usdt":
-            deposit_usdt_prompt(call)
-        elif call.data == "back_to_menu":
-            show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name)
-        elif call.data.startswith("deposit_"):
-            handle_deposit_amount(call)
-        elif call.data.startswith("buy_"):
-            handle_buy(call)
-        elif call.data == "outofstock":
-            lang = get_lang(call.from_user.id)
-            bot.send_message(call.message.chat.id, 
-                "❌ Sản phẩm hiện đang hết hàng!" if lang == "vi" else "❌ Product is out of stock!")
-        elif call.data in ["confirm_reset_all", "cancel_reset_all"]:
-            handle_reset_all(call)
-        elif call.data.startswith("confirm_xoasoduall_"):
-            handle_xoasoduall_callback(call)
-        elif call.data == "cancel_xoasoduall":
-            bot.edit_message_text("❌ Đã hủy thao tác xóa số dư.", call.message.chat.id, call.message.message_id)
-            bot.answer_callback_query(call.id, "Đã hủy")
-    except Exception as e:
-        print("Lỗi callback:", e)
-
 def handle_language_selection(call):
     lang = call.data.split("_")[1]
     user_id = call.from_user.id
@@ -714,6 +679,7 @@ def admin_help(message):
 /xoasodu <user_id> [vnd|usdt|all] - Xóa số dư 1 user
 /xoasoduall [vnd|usdt|all] - Xóa số dư TẤT CẢ user (có xác nhận)
 /addbalance <user_id> <số> [vnd|usdt] - Cộng tiền
+/resetallbalance - Reset tất cả số dư (có xác nhận)
 
 💰 **Quản lý nạp:**
 /duyetnap <mã> - Duyệt nạp VND
@@ -929,33 +895,6 @@ def admin_xoa_so_du_all(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
 
-def handle_xoasoduall_callback(call):
-    """Xử lý callback xác nhận xóa số dư tất cả user"""
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "❌ Bạn không có quyền!", show_alert=True)
-        return
-    
-    currency = call.data.replace("confirm_xoasoduall_", "")
-    
-    # Đếm và tính tổng trước khi xóa
-    total_users = users.count_documents({})
-    total_vnd = sum(u.get('balance', 0) for u in users.find())
-    total_usdt = sum(u.get('balance_usdt', 0) for u in users.find())
-    
-    # Thực hiện xóa
-    if currency == "vnd":
-        users.update_many({}, {"$set": {"balance": 0}})
-        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ VND**\n\n👥 Đã xử lý: **{total_users}** user\n💰 Đã xóa: **{total_vnd:,}đ**"
-    elif currency == "usdt":
-        users.update_many({}, {"$set": {"balance_usdt": 0}})
-        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ USDT**\n\n👥 Đã xử lý: **{total_users}** user\n💵 Đã xóa: **{total_usdt} USDT**"
-    else:  # all
-        users.update_many({}, {"$set": {"balance": 0, "balance_usdt": 0}})
-        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ (VND + USDT)**\n\n👥 Đã xử lý: **{total_users}** user\n💰 Đã xóa VND: **{total_vnd:,}đ**\n💵 Đã xóa USDT: **{total_usdt} USDT**"
-    
-    bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-    bot.answer_callback_query(call.id, "✅ Đã xóa thành công!")
-
 @bot.message_handler(commands=['stock'])
 def admin_view_stock(message):
     if message.from_user.id != ADMIN_ID:
@@ -1135,53 +1074,6 @@ def admin_upload_command(message):
         f"Mỗi dòng là một tài khoản (định dạng: `email|password` hoặc `username|password` hoặc tài khoản đơn)"
     )
 
-@bot.message_handler(content_types=['document'])
-def handle_document(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    pending = pending_uploads.find_one({"user_id": message.from_user.id})
-    if not pending:
-        return
-    
-    category = pending.get("category")
-    if not category:
-        return
-    
-    try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        content = downloaded_file.decode('utf-8')
-        accounts = [line.strip() for line in content.split('\n') if line.strip()]
-        
-        if not accounts:
-            bot.reply_to(message, "❌ File trống hoặc không có tài khoản hợp lệ!")
-            return
-        
-        stock_doc = stocks.find_one({"category": category})
-        if stock_doc:
-            existing_accounts = stock_doc.get("accounts", [])
-            existing_accounts.extend(accounts)
-            stocks.update_one(
-                {"category": category},
-                {"$set": {"accounts": existing_accounts}}
-            )
-        else:
-            stocks.insert_one({"category": category, "accounts": accounts})
-        
-        pending_uploads.delete_one({"user_id": message.from_user.id})
-        
-        product_name = CATEGORIES[category]["name"]
-        bot.reply_to(
-            message, 
-            f"✅ Đã thêm **{len(accounts)}** tài khoản vào **{product_name}**!\n"
-            f"Tổng số tài khoản hiện tại: **{get_stock_count(category)}**"
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi khi xử lý file: {str(e)}")
-
 @bot.message_handler(commands=['duyetnap'])
 def admin_duyet_nap(message):
     if message.from_user.id != ADMIN_ID:
@@ -1344,15 +1236,6 @@ def admin_reset_all_balance(message):
     markup.add(telebot.types.InlineKeyboardButton("❌ Hủy", callback_data="cancel_reset_all"))
     bot.reply_to(message, "⚠️ Bạn sắp reset số dư về 0 cho **TẤT CẢ** user (cả VND và USDT). Xác nhận?", reply_markup=markup)
 
-def handle_reset_all(call):
-    if call.from_user.id != ADMIN_ID:
-        return
-    if call.data == "cancel_reset_all":
-        bot.edit_message_text("Đã hủy.", call.message.chat.id, call.message.message_id)
-        return
-    users.update_many({}, {"$set": {"balance": 0, "balance_usdt": 0}})
-    bot.edit_message_text("✅ Đã reset số dư về 0 cho tất cả user.", call.message.chat.id, call.message.message_id)
-
 @bot.message_handler(commands=['setusdtrate'])
 def admin_set_usdt_rate(message):
     global USDT_RATE
@@ -1371,11 +1254,141 @@ def admin_set_usdt_rate(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {e}\nSử dụng: /setusdtrate <tỷ_giá>")
 
-# ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG ==================
+# ================== HANDLER CHO DOCUMENT (FILE UPLOAD) ==================
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    # Chỉ admin mới được upload
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    pending = pending_uploads.find_one({"user_id": message.from_user.id})
+    if not pending:
+        bot.reply_to(message, "❌ Bạn chưa dùng lệnh upload nào! Hãy dùng /upload_canva, /upload_youtube, v.v... trước.")
+        return
+    
+    category = pending.get("category")
+    if not category:
+        return
+    
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        content = downloaded_file.decode('utf-8')
+        accounts = [line.strip() for line in content.split('\n') if line.strip()]
+        
+        if not accounts:
+            bot.reply_to(message, "❌ File trống hoặc không có tài khoản hợp lệ!")
+            return
+        
+        stock_doc = stocks.find_one({"category": category})
+        if stock_doc:
+            existing_accounts = stock_doc.get("accounts", [])
+            existing_accounts.extend(accounts)
+            stocks.update_one(
+                {"category": category},
+                {"$set": {"accounts": existing_accounts}}
+            )
+        else:
+            stocks.insert_one({"category": category, "accounts": accounts})
+        
+        pending_uploads.delete_one({"user_id": message.from_user.id})
+        
+        product_name = CATEGORIES[category]["name"]
+        bot.reply_to(
+            message, 
+            f"✅ Đã thêm **{len(accounts)}** tài khoản vào **{product_name}**!\n"
+            f"Tổng số tài khoản hiện tại: **{get_stock_count(category)}**"
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi khi xử lý file: {str(e)}")
+
+# ================== CALLBACK HANDLER ==================
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    bot.answer_callback_query(call.id)
+    try:
+        if call.data.startswith("lang_"):
+            handle_language_selection(call)
+        elif call.data == "change_language":
+            change_language_menu(call)
+        elif call.data == "my_wallet":
+            show_wallet(call)
+        elif call.data == "deposit":
+            deposit_menu(call)
+        elif call.data == "deposit_usdt":
+            deposit_usdt_prompt(call)
+        elif call.data == "back_to_menu":
+            show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name)
+        elif call.data.startswith("deposit_"):
+            handle_deposit_amount(call)
+        elif call.data.startswith("buy_"):
+            handle_buy(call)
+        elif call.data == "outofstock":
+            lang = get_lang(call.from_user.id)
+            bot.send_message(call.message.chat.id, 
+                "❌ Sản phẩm hiện đang hết hàng!" if lang == "vi" else "❌ Product is out of stock!")
+        elif call.data in ["confirm_reset_all", "cancel_reset_all"]:
+            handle_reset_all(call)
+        elif call.data.startswith("confirm_xoasoduall_"):
+            handle_xoasoduall_callback(call)
+        elif call.data == "cancel_xoasoduall":
+            bot.edit_message_text("❌ Đã hủy thao tác xóa số dư.", call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id, "Đã hủy")
+    except Exception as e:
+        print("Lỗi callback:", e)
+
+def handle_reset_all(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+    if call.data == "cancel_reset_all":
+        bot.edit_message_text("Đã hủy.", call.message.chat.id, call.message.message_id)
+        return
+    users.update_many({}, {"$set": {"balance": 0, "balance_usdt": 0}})
+    bot.edit_message_text("✅ Đã reset số dư về 0 cho tất cả user.", call.message.chat.id, call.message.message_id)
+
+def handle_xoasoduall_callback(call):
+    """Xử lý callback xác nhận xóa số dư tất cả user"""
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Bạn không có quyền!", show_alert=True)
+        return
+    
+    currency = call.data.replace("confirm_xoasoduall_", "")
+    
+    # Đếm và tính tổng trước khi xóa
+    total_users = users.count_documents({})
+    total_vnd = sum(u.get('balance', 0) for u in users.find())
+    total_usdt = sum(u.get('balance_usdt', 0) for u in users.find())
+    
+    # Thực hiện xóa
+    if currency == "vnd":
+        users.update_many({}, {"$set": {"balance": 0}})
+        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ VND**\n\n👥 Đã xử lý: **{total_users}** user\n💰 Đã xóa: **{total_vnd:,}đ**"
+    elif currency == "usdt":
+        users.update_many({}, {"$set": {"balance_usdt": 0}})
+        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ USDT**\n\n👥 Đã xử lý: **{total_users}** user\n💵 Đã xóa: **{total_usdt} USDT**"
+    else:  # all
+        users.update_many({}, {"$set": {"balance": 0, "balance_usdt": 0}})
+        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ (VND + USDT)**\n\n👥 Đã xử lý: **{total_users}** user\n💰 Đã xóa VND: **{total_vnd:,}đ**\n💵 Đã xóa USDT: **{total_usdt} USDT**"
+    
+    bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    bot.answer_callback_query(call.id, "✅ Đã xóa thành công!")
+
+# ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG (CUỐI CÙNG) ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
     user_id = message.from_user.id
     user = get_user(user_id)
+    
+    # Bỏ qua nếu là lệnh (bắt đầu bằng /)
+    if message.text and message.text.startswith('/'):
+        lang = user.get("language", "vi")
+        if lang == "vi":
+            bot.reply_to(message, "❌ Lệnh không tồn tại. Dùng /start để bắt đầu.")
+        else:
+            bot.reply_to(message, "❌ Command not found. Use /start to begin.")
+        return
     
     waiting_for = user.get("waiting_email_for")
     
@@ -1423,6 +1436,7 @@ Ngôn ngữ/Language: {lang.upper()}
         
         return
     
+    # Tin nhắn thông thường không phải lệnh
     lang = user.get("language", "vi")
     if lang == "vi":
         bot.reply_to(message, "❌ Không hiểu lệnh. Dùng /start để bắt đầu.")
