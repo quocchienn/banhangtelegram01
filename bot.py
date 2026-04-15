@@ -1,7 +1,7 @@
 import telebot
 import random
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from payos import PayOS
@@ -273,6 +273,11 @@ def callback_handler(call):
                 "❌ Sản phẩm hiện đang hết hàng!" if lang == "vi" else "❌ Product is out of stock!")
         elif call.data in ["confirm_reset_all", "cancel_reset_all"]:
             handle_reset_all(call)
+        elif call.data.startswith("confirm_xoasoduall_"):
+            handle_xoasoduall_callback(call)
+        elif call.data == "cancel_xoasoduall":
+            bot.edit_message_text("❌ Đã hủy thao tác xóa số dư.", call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id, "Đã hủy")
     except Exception as e:
         print("Lỗi callback:", e)
 
@@ -698,15 +703,16 @@ Remaining balance: {new_balance} USDT
 @bot.message_handler(commands=['admin'])
 def admin_help(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     
     help_text = """
 🔧 **ADMIN COMMANDS**
 
 📊 **Quản lý user:**
-/danhsach - Xem danh sách tất cả người dùng (Tên, ID, Số dư)
-/resetbalance <user_id> - Reset số dư 1 user
-/resetallbalance - Reset tất cả số dư
+/danhsach - Xem danh sách tất cả người dùng
+/xoasodu <user_id> [vnd|usdt|all] - Xóa số dư 1 user
+/xoasoduall [vnd|usdt|all] - Xóa số dư TẤT CẢ user (có xác nhận)
 /addbalance <user_id> <số> [vnd|usdt] - Cộng tiền
 
 💰 **Quản lý nạp:**
@@ -804,9 +810,156 @@ def admin_danhsach(message):
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
         print(f"Lỗi lệnh danhsach: {e}")
 
+@bot.message_handler(commands=['xoasodu'])
+def admin_xoa_so_du(message):
+    """Xóa số dư của một người dùng (đưa về 0)"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "Sử dụng: /xoasodu <user_id> [vnd|usdt|all]\nVí dụ:\n- /xoasodu 123456789 vnd (chỉ xóa VND)\n- /xoasodu 123456789 usdt (chỉ xóa USDT)\n- /xoasodu 123456789 all (xóa cả hai)")
+            return
+        
+        user_id = int(parts[1])
+        currency = parts[2].lower() if len(parts) > 2 else "all"
+        
+        user = get_user(user_id)
+        if not user:
+            bot.reply_to(message, f"❌ Không tìm thấy user với ID `{user_id}`!")
+            return
+        
+        old_vnd = user.get('balance', 0)
+        old_usdt = user.get('balance_usdt', 0)
+        
+        if currency == "vnd":
+            if old_vnd == 0:
+                bot.reply_to(message, f"ℹ️ User `{user_id}` đã có 0đ VND!")
+                return
+            update_balance(user_id, -old_vnd, "vnd")
+            bot.reply_to(
+                message, 
+                f"✅ Đã xóa **{old_vnd:,}đ** VND của user `{user_id}`!\n"
+                f"👤 {user.get('first_name', 'N/A')}\n"
+                f"💰 Số dư VND mới: **0đ**\n"
+                f"💵 Số dư USDT giữ nguyên: **{old_usdt} USDT**"
+            )
+            
+        elif currency == "usdt":
+            if old_usdt == 0:
+                bot.reply_to(message, f"ℹ️ User `{user_id}` đã có 0 USDT!")
+                return
+            update_balance(user_id, -old_usdt, "usdt")
+            bot.reply_to(
+                message, 
+                f"✅ Đã xóa **{old_usdt} USDT** của user `{user_id}`!\n"
+                f"👤 {user.get('first_name', 'N/A')}\n"
+                f"💰 Số dư VND giữ nguyên: **{old_vnd:,}đ**\n"
+                f"💵 Số dư USDT mới: **0 USDT**"
+            )
+            
+        else:  # all
+            if old_vnd == 0 and old_usdt == 0:
+                bot.reply_to(message, f"ℹ️ User `{user_id}` đã có 0đ và 0 USDT!")
+                return
+            
+            update_balance(user_id, -old_vnd, "vnd")
+            update_balance(user_id, -old_usdt, "usdt")
+            bot.reply_to(
+                message, 
+                f"✅ Đã xóa toàn bộ số dư của user `{user_id}`!\n"
+                f"👤 {user.get('first_name', 'N/A')}\n"
+                f"💰 VND đã xóa: **{old_vnd:,}đ** → 0đ\n"
+                f"💵 USDT đã xóa: **{old_usdt}** → 0 USDT"
+            )
+            
+    except ValueError:
+        bot.reply_to(message, "❌ ID người dùng không hợp lệ!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['xoasoduall'])
+def admin_xoa_so_du_all(message):
+    """Xóa số dư của TẤT CẢ người dùng (có xác nhận)"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split()
+        currency = parts[1].lower() if len(parts) > 1 else "all"
+        
+        if currency not in ["vnd", "usdt", "all"]:
+            bot.reply_to(message, "❌ Tham số không hợp lệ! Sử dụng: vnd, usdt, hoặc all")
+            return
+        
+        # Đếm số user sẽ bị ảnh hưởng
+        total_users = users.count_documents({})
+        
+        if currency == "vnd":
+            total_balance = sum(u.get('balance', 0) for u in users.find())
+            if total_balance == 0:
+                bot.reply_to(message, "ℹ️ Tất cả user đã có 0đ VND!")
+                return
+            confirm_text = f"⚠️ **XÁC NHẬN XÓA TOÀN BỘ SỐ DƯ VND**\n\n👥 Số user bị ảnh hưởng: **{total_users}**\n💰 Tổng VND sẽ xóa: **{total_balance:,}đ**\n\nBạn có chắc chắn muốn xóa?"
+        elif currency == "usdt":
+            total_balance = sum(u.get('balance_usdt', 0) for u in users.find())
+            if total_balance == 0:
+                bot.reply_to(message, "ℹ️ Tất cả user đã có 0 USDT!")
+                return
+            confirm_text = f"⚠️ **XÁC NHẬN XÓA TOÀN BỘ SỐ DƯ USDT**\n\n👥 Số user bị ảnh hưởng: **{total_users}**\n💵 Tổng USDT sẽ xóa: **{total_balance} USDT**\n\nBạn có chắc chắn muốn xóa?"
+        else:
+            total_vnd = sum(u.get('balance', 0) for u in users.find())
+            total_usdt = sum(u.get('balance_usdt', 0) for u in users.find())
+            if total_vnd == 0 and total_usdt == 0:
+                bot.reply_to(message, "ℹ️ Tất cả user đã có 0đ và 0 USDT!")
+                return
+            confirm_text = f"⚠️ **XÁC NHẬN XÓA TOÀN BỘ SỐ DƯ (VND + USDT)**\n\n👥 Số user bị ảnh hưởng: **{total_users}**\n💰 Tổng VND sẽ xóa: **{total_vnd:,}đ**\n💵 Tổng USDT sẽ xóa: **{total_usdt} USDT**\n\nBạn có chắc chắn muốn xóa?"
+        
+        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            telebot.types.InlineKeyboardButton("✅ XÁC NHẬN", callback_data=f"confirm_xoasoduall_{currency}"),
+            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_xoasoduall")
+        )
+        
+        bot.reply_to(message, confirm_text, reply_markup=markup, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+def handle_xoasoduall_callback(call):
+    """Xử lý callback xác nhận xóa số dư tất cả user"""
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Bạn không có quyền!", show_alert=True)
+        return
+    
+    currency = call.data.replace("confirm_xoasoduall_", "")
+    
+    # Đếm và tính tổng trước khi xóa
+    total_users = users.count_documents({})
+    total_vnd = sum(u.get('balance', 0) for u in users.find())
+    total_usdt = sum(u.get('balance_usdt', 0) for u in users.find())
+    
+    # Thực hiện xóa
+    if currency == "vnd":
+        users.update_many({}, {"$set": {"balance": 0}})
+        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ VND**\n\n👥 Đã xử lý: **{total_users}** user\n💰 Đã xóa: **{total_vnd:,}đ**"
+    elif currency == "usdt":
+        users.update_many({}, {"$set": {"balance_usdt": 0}})
+        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ USDT**\n\n👥 Đã xử lý: **{total_users}** user\n💵 Đã xóa: **{total_usdt} USDT**"
+    else:  # all
+        users.update_many({}, {"$set": {"balance": 0, "balance_usdt": 0}})
+        result_text = f"✅ **ĐÃ XÓA TOÀN BỘ SỐ DƯ (VND + USDT)**\n\n👥 Đã xử lý: **{total_users}** user\n💰 Đã xóa VND: **{total_vnd:,}đ**\n💵 Đã xóa USDT: **{total_usdt} USDT**"
+    
+    bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    bot.answer_callback_query(call.id, "✅ Đã xóa thành công!")
+
 @bot.message_handler(commands=['stock'])
 def admin_view_stock(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     
     text = "📦 **TỒN KHO HIỆN TẠI**\n\n"
@@ -821,6 +974,7 @@ def admin_view_stock(message):
 @bot.message_handler(commands=['setcanva'])
 def admin_set_canva(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -846,6 +1000,7 @@ def admin_set_canva(message):
 @bot.message_handler(commands=['setyoutube'])
 def admin_set_youtube(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -871,6 +1026,7 @@ def admin_set_youtube(message):
 @bot.message_handler(commands=['sethotspot'])
 def admin_set_hotspot(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -896,6 +1052,7 @@ def admin_set_hotspot(message):
 @bot.message_handler(commands=['setgemini'])
 def admin_set_gemini(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -921,6 +1078,7 @@ def admin_set_gemini(message):
 @bot.message_handler(commands=['setcapcut'])
 def admin_set_capcut(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -947,6 +1105,7 @@ def admin_set_capcut(message):
 @bot.message_handler(commands=['upload_canva', 'upload_youtube', 'upload_hotspot', 'upload_gemini', 'upload_capcut'])
 def admin_upload_command(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     
     cmd = message.text.split()[0].split('_')[1]
@@ -1026,6 +1185,7 @@ def handle_document(message):
 @bot.message_handler(commands=['duyetnap'])
 def admin_duyet_nap(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -1059,6 +1219,7 @@ def admin_duyet_nap(message):
 @bot.message_handler(commands=['duyetnapusdt'])
 def admin_duyet_nap_usdt(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -1093,6 +1254,7 @@ def admin_duyet_nap_usdt(message):
 @bot.message_handler(commands=['giao'])
 def admin_giao(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -1143,28 +1305,10 @@ Account: `{account}`
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {e}\nSử dụng: /giao <mã đơn>")
 
-@bot.message_handler(commands=['resetbalance'])
-def admin_reset_balance(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            bot.reply_to(message, "Sử dụng: /resetbalance <user_id>")
-            return
-        
-        user_id = int(parts[1])
-        old_vnd = get_user(user_id)['balance']
-        old_usdt = get_user(user_id)['balance_usdt']
-        update_balance(user_id, -old_vnd, "vnd")
-        update_balance(user_id, -old_usdt, "usdt")
-        bot.reply_to(message, f"✅ Đã reset số dư user `{user_id}`:\n- VND: {old_vnd:,}đ → 0đ\n- USDT: {old_usdt} → 0")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {e}\nSử dụng: /resetbalance <user_id>")
-
 @bot.message_handler(commands=['addbalance'])
 def admin_add_balance(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
@@ -1193,6 +1337,7 @@ def admin_add_balance(message):
 @bot.message_handler(commands=['resetallbalance'])
 def admin_reset_all_balance(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton("✅ Xác nhận reset tất cả", callback_data="confirm_reset_all"))
@@ -1212,6 +1357,7 @@ def handle_reset_all(call):
 def admin_set_usdt_rate(message):
     global USDT_RATE
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     try:
         parts = message.text.split()
