@@ -31,7 +31,7 @@ orders = db['orders']
 stocks = db['stocks']
 categories = db['categories']
 
-# Thêm collection để lưu trạng thái chờ upload
+# Collection để lưu trạng thái chờ upload
 pending_uploads = db['pending_uploads']
 
 CATEGORIES = {
@@ -117,7 +117,7 @@ def get_user(user_id):
             "balance_usdt": 0,
             "language": None,
             "joined_at": datetime.now(),
-            "waiting_email_for": None  # Lưu trạng thái đang chờ email cho đơn nào
+            "waiting_email_for": None
         }
         users.insert_one(user)
     return user
@@ -178,8 +178,15 @@ Trạng thái/Status: Chờ thanh toán/Pending
 def start(message):
     user = get_user(message.from_user.id)
     
-    # Xóa trạng thái chờ email khi start
-    users.update_one({"user_id": message.from_user.id}, {"$set": {"waiting_email_for": None}})
+    # Cập nhật thông tin user
+    users.update_one(
+        {"user_id": message.from_user.id},
+        {"$set": {
+            "username": message.from_user.username,
+            "first_name": message.from_user.first_name,
+            "waiting_email_for": None
+        }}
+    )
     
     # Luôn hiển thị menu chọn ngôn ngữ trước
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
@@ -697,7 +704,7 @@ def admin_help(message):
 🔧 **ADMIN COMMANDS**
 
 📊 **Quản lý user:**
-/users - Xem danh sách số dư
+/danhsach - Xem danh sách tất cả người dùng (Tên, ID, Số dư)
 /resetbalance <user_id> - Reset số dư 1 user
 /resetallbalance - Reset tất cả số dư
 /addbalance <user_id> <số> [vnd|usdt] - Cộng tiền
@@ -718,8 +725,8 @@ def admin_help(message):
 /stock - Xem tồn kho hiện tại
 
 📤 **Upload tài khoản:**
-/upload_canva - Upload file txt cho Canva 1 Slot
-/upload_youtube - Upload file txt cho YouTube 1 Slot
+/upload_canva - Upload file txt cho Canva
+/upload_youtube - Upload file txt cho YouTube
 /upload_hotspot - Upload file txt cho Hotspot
 /upload_gemini - Upload file txt cho Gemini
 /upload_capcut - Upload file txt cho CapCut
@@ -729,36 +736,73 @@ def admin_help(message):
     """
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
-@bot.message_handler(commands=['users'])
-def admin_view_balances(message):
+@bot.message_handler(commands=['danhsach'])
+def admin_danhsach(message):
+    """Xem danh sách tất cả người dùng với Tên, ID, Số dư"""
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
         return
     
-    all_users = users.find().sort("balance", -1)
-    
-    if all_users.count() == 0:
-        bot.send_message(message.chat.id, "📊 Chưa có user nào.")
-        return
-    
-    text = "📊 **DANH SÁCH SỐ DƯ USER**\n\n"
-    count = 0
-    
-    for u in all_users:
-        name = u.get('first_name') or u.get('username') or 'Unknown'
-        lang = u.get('language', 'vi')
-        balance_vnd = u.get('balance', 0)
-        balance_usdt = u.get('balance_usdt', 0)
-        text += f"👤 {name} (ID: `{u['user_id']}`) [{lang.upper()}]\n"
-        text += f"   💰 VND: `{balance_vnd:,}đ` | 💵 USDT: `{balance_usdt}`\n\n"
-        count += 1
+    try:
+        all_users = list(users.find())
         
-        if count >= 50:
-            bot.send_message(message.chat.id, text, parse_mode='Markdown')
-            text = ""
-            count = 0
-    
-    if text:
-        bot.send_message(message.chat.id, text, parse_mode='Markdown')
+        if not all_users:
+            bot.reply_to(message, "📊 Chưa có người dùng nào.")
+            return
+        
+        # Sắp xếp theo số dư VND giảm dần
+        all_users.sort(key=lambda x: x.get('balance', 0), reverse=True)
+        
+        total_users = len(all_users)
+        total_balance_vnd = sum(u.get('balance', 0) for u in all_users)
+        total_balance_usdt = sum(u.get('balance_usdt', 0) for u in all_users)
+        
+        # Tạo header
+        text = f"📊 **DANH SÁCH NGƯỜI DÙNG**\n"
+        text += f"👥 Tổng số: **{total_users}** người dùng\n"
+        text += f"💰 Tổng VND: **{total_balance_vnd:,}đ**\n"
+        text += f"💵 Tổng USDT: **{total_balance_usdt} USDT**\n"
+        text += "──────────────────────────────\n\n"
+        
+        # Gửi từng phần nếu quá dài
+        part = 1
+        current_text = text
+        
+        for idx, u in enumerate(all_users, 1):
+            user_id = u.get('user_id', 'N/A')
+            first_name = u.get('first_name', 'Không tên')
+            username = u.get('username', '')
+            balance_vnd = u.get('balance', 0)
+            balance_usdt = u.get('balance_usdt', 0)
+            lang = u.get('language', 'vi')
+            joined = u.get('joined_at', datetime.now()).strftime('%d/%m/%Y')
+            
+            # Format tên hiển thị
+            if username:
+                display_name = f"{first_name} (@{username})"
+            else:
+                display_name = first_name
+            
+            user_info = f"**{idx}.** {display_name}\n"
+            user_info += f"   🆔 `{user_id}`\n"
+            user_info += f"   💰 VND: `{balance_vnd:,}đ` | USDT: `{balance_usdt}`\n"
+            user_info += f"   🌐 {lang.upper()} | 📅 {joined}\n\n"
+            
+            # Kiểm tra độ dài, nếu quá 3500 ký tự thì gửi phần hiện tại
+            if len(current_text + user_info) > 3500:
+                bot.send_message(message.chat.id, current_text, parse_mode='Markdown')
+                current_text = f"📊 **DANH SÁCH NGƯỜI DÙNG (Phần {part+1})**\n\n"
+                part += 1
+            
+            current_text += user_info
+        
+        # Gửi phần còn lại
+        if current_text:
+            bot.send_message(message.chat.id, current_text, parse_mode='Markdown')
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+        print(f"Lỗi lệnh danhsach: {e}")
 
 @bot.message_handler(commands=['stock'])
 def admin_view_stock(message):
@@ -789,7 +833,6 @@ def admin_set_canva(message):
             bot.reply_to(message, "❌ Số lượng không được âm!")
             return
         
-        # Tạo mảng accounts với số lượng yêu cầu
         accounts = ["Slot sẵn sàng"] * count
         stocks.update_one(
             {"category": "canva1slot"}, 
@@ -906,7 +949,7 @@ def admin_upload_command(message):
     if message.from_user.id != ADMIN_ID:
         return
     
-    cmd = message.text.split()[0].split('_')[1]  # Lấy loại sản phẩm
+    cmd = message.text.split()[0].split('_')[1]
     
     category_map = {
         "canva": "canva1slot",
@@ -920,7 +963,6 @@ def admin_upload_command(message):
     if not category:
         return
     
-    # Lưu trạng thái chờ upload
     pending_uploads.update_one(
         {"user_id": message.from_user.id},
         {"$set": {"category": category, "timestamp": datetime.now()}},
@@ -939,7 +981,6 @@ def handle_document(message):
     if message.from_user.id != ADMIN_ID:
         return
     
-    # Kiểm tra xem admin có đang chờ upload không
     pending = pending_uploads.find_one({"user_id": message.from_user.id})
     if not pending:
         return
@@ -952,7 +993,6 @@ def handle_document(message):
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        # Đọc nội dung file
         content = downloaded_file.decode('utf-8')
         accounts = [line.strip() for line in content.split('\n') if line.strip()]
         
@@ -960,7 +1000,6 @@ def handle_document(message):
             bot.reply_to(message, "❌ File trống hoặc không có tài khoản hợp lệ!")
             return
         
-        # Cập nhật vào stock
         stock_doc = stocks.find_one({"category": category})
         if stock_doc:
             existing_accounts = stock_doc.get("accounts", [])
@@ -972,7 +1011,6 @@ def handle_document(message):
         else:
             stocks.insert_one({"category": category, "accounts": accounts})
         
-        # Xóa trạng thái chờ
         pending_uploads.delete_one({"user_id": message.from_user.id})
         
         product_name = CATEGORIES[category]["name"]
@@ -1170,20 +1208,6 @@ def handle_reset_all(call):
     users.update_many({}, {"$set": {"balance": 0, "balance_usdt": 0}})
     bot.edit_message_text("✅ Đã reset số dư về 0 cho tất cả user.", call.message.chat.id, call.message.message_id)
 
-@bot.message_handler(commands=['resetcanva1'])
-def admin_reset_canva1(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    stocks.update_one({"category": "canva1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 100}}, upsert=True)
-    bot.reply_to(message, "✅ Đã reset Canva 1 Slot về **100 slot**!")
-
-@bot.message_handler(commands=['resetyoutube'])
-def admin_reset_youtube(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    stocks.update_one({"category": "youtube1slot"}, {"$set": {"accounts": ["Slot sẵn sàng"] * 10}}, upsert=True)
-    bot.reply_to(message, "✅ Đã reset YouTube 1 Slot về **10 slot**!")
-
 @bot.message_handler(commands=['setusdtrate'])
 def admin_set_usdt_rate(message):
     global USDT_RATE
@@ -1207,20 +1231,16 @@ def handle_user_message(message):
     user_id = message.from_user.id
     user = get_user(user_id)
     
-    # KIỂM TRA TRẠNG THÁI CHỜ EMAIL - CHỈ XỬ LÝ KHI CÓ TRẠNG THÁI
     waiting_for = user.get("waiting_email_for")
     
     if waiting_for:
-        # Người dùng đang trong trạng thái chờ nhập email
         email = message.text.strip()
         lang = user.get("language", "vi")
         
-        # Kiểm tra email hợp lệ
         if not re.match(r'^[\w\.-]+@gmail\.com$', email, re.IGNORECASE):
             bot.reply_to(message, t(user_id, 'email_invalid'))
             return
         
-        # Tìm đơn hàng đang chờ email
         pending = orders.find_one({"order_code": waiting_for, "user_id": user_id, "status": "waiting_email"})
         
         if pending:
@@ -1242,7 +1262,6 @@ Ngôn ngữ/Language: {lang.upper()}
                 {"$set": {"status": "waiting_admin", "user_email": email}}
             )
             
-            # XÓA TRẠNG THÁI CHỜ EMAIL SAU KHI ĐÃ GỬI
             users.update_one(
                 {"user_id": user_id}, 
                 {"$set": {"waiting_email_for": None}}
@@ -1250,7 +1269,6 @@ Ngôn ngữ/Language: {lang.upper()}
             
             bot.reply_to(message, t(user_id, 'email_sent'))
         else:
-            # Không tìm thấy đơn - xóa trạng thái
             users.update_one(
                 {"user_id": user_id}, 
                 {"$set": {"waiting_email_for": None}}
@@ -1259,7 +1277,6 @@ Ngôn ngữ/Language: {lang.upper()}
         
         return
     
-    # Nếu không trong trạng thái chờ email, xử lý như tin nhắn thông thường
     lang = user.get("language", "vi")
     if lang == "vi":
         bot.reply_to(message, "❌ Không hiểu lệnh. Dùng /start để bắt đầu.")
