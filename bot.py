@@ -506,23 +506,63 @@ def handle_buy(call):
         msg = "❌ Sản phẩm đã hết hàng!" if lang == "vi" else "❌ Product is out of stock!"
         return bot.send_message(call.message.chat.id, msg)
 
+    # Xác định giá và số dư theo ngôn ngữ
     if lang == "vi":
         price = info["price"]
         currency = "vnd"
         balance = user.get("balance", 0)
+        price_display = f"{price:,}đ"
     else:
         price = info["price_usdt"]
         currency = "usdt"
         balance = user.get("balance_usdt", 0)
+        price_display = f"{price} USDT"
 
+    # ========== KIỂM TRA SỐ DƯ - TẤT CẢ SẢN PHẨM ĐỀU YÊU CẦU ĐỦ TIỀN TRONG VÍ ==========
+    if balance < price:
+        product_name = info["name"] if lang == "vi" else info["name_en"]
+        
+        if lang == "vi":
+            msg = f"""
+❌ **Số dư ví không đủ!**
+
+🛒 Sản phẩm: **{product_name}**
+💳 Giá: **{price_display}**
+💰 Số dư hiện tại: **{user.get('balance', 0):,}đ** (VND) | **{user.get('balance_usdt', 0)} USDT**
+
+Vui lòng nạp thêm tiền vào ví để tiếp tục mua hàng.
+            """
+        else:
+            msg = f"""
+❌ **Insufficient balance!**
+
+🛒 Product: **{product_name}**
+💳 Price: **{price_display}**
+💰 Current balance: **{user.get('balance', 0):,} VND** | **{user.get('balance_usdt', 0)} USDT**
+
+Please deposit more funds to continue.
+            """
+        
+        # Tạo markup với nút nạp tiền
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(
+            t(user_id, 'deposit'), callback_data="deposit"
+        ))
+        markup.add(telebot.types.InlineKeyboardButton(
+            t(user_id, 'deposit_usdt'), callback_data="deposit_usdt"
+        ))
+        markup.add(telebot.types.InlineKeyboardButton(
+            t(user_id, 'back_to_menu'), callback_data="back_to_menu"
+        ))
+        
+        bot.send_message(call.message.chat.id, msg, parse_mode='Markdown', reply_markup=markup)
+        return
+
+    # ========== ĐỦ TIỀN - TIẾN HÀNH MUA ==========
+    
+    # Sản phẩm Canva 1 Slot và YouTube 1 Slot yêu cầu nhập email
     if code in ["canva1slot", "youtube1slot"]:
-        if balance < price:
-            if lang == "vi":
-                msg = f"❌ Số dư ví không đủ!\nCần {price:,}đ\nHiện có: {balance:,}đ"
-            else:
-                msg = f"❌ Insufficient balance!\nNeed {price} USDT\nCurrent: {balance} USDT"
-            return bot.send_message(call.message.chat.id, msg)
-
+        # Trừ tiền trước
         update_balance(user_id, -price, currency)
 
         order_code = generate_order_code()
@@ -540,6 +580,7 @@ def handle_buy(call):
         orders.insert_one(order)
         notify_admin(order)
 
+        # Trừ stock (giữ 1 slot)
         stock_doc = stocks.find_one({"category": code})
         if stock_doc and stock_doc.get("accounts"):
             stock_doc["accounts"].pop(0)
@@ -551,118 +592,113 @@ def handle_buy(call):
             {"$set": {"waiting_email_for": order_code}}
         )
 
+        product_name = info["name"] if lang == "vi" else info["name_en"]
+        new_balance = balance - price
+        
         if lang == "vi":
             msg = f"""
-✅ Đã trừ {price:,}đ từ ví!
+✅ **Đã trừ {price_display} từ ví!**
 
-📧 Vui lòng gửi **email (@gmail.com)** của bạn ngay bây giờ.
+🛒 Sản phẩm: **{product_name}**
+💰 Số dư còn lại: **{new_balance:,}đ**
+
+📧 Vui lòng gửi **email (@gmail.com)** của bạn ngay bây giờ để admin thêm vào slot.
             """
         else:
             msg = f"""
-✅ Deducted {price} USDT from wallet!
+✅ **Deducted {price_display} from wallet!**
 
-📧 Please send your **email (@gmail.com)** now.
+🛒 Product: **{product_name}**
+💰 Remaining balance: **{new_balance} USDT**
+
+📧 Please send your **email (@gmail.com)** now for admin to add you to the slot.
             """
-        bot.send_message(call.message.chat.id, msg)
+        bot.send_message(call.message.chat.id, msg, parse_mode='Markdown')
         return
 
-    # Các sản phẩm khác - mua trực tiếp từ số dư
-    if balance >= price:
-        update_balance(user_id, -price, currency)
-        stock_doc = stocks.find_one({"category": code})
-        if stock_doc and stock_doc.get("accounts"):
-            account = stock_doc["accounts"].pop(0)
-            stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
-            
-            product_name = info["name"] if lang == "vi" else info["name_en"]
-            new_balance = balance - price
-            
-            order_code = generate_order_code()
-            order = {
-                "order_code": order_code,
-                "user_id": user_id,
-                "category": code,
-                "amount": info["price"],
-                "amount_usdt": info["price_usdt"],
-                "type": "purchase",
-                "currency_used": currency,
-                "status": "delivered",
-                "account": account,
-                "created_at": datetime.now(),
-                "delivered_at": datetime.now()
-            }
-            orders.insert_one(order)
-            
-            if lang == "vi":
-                msg = f"""
-🎉 **Mua thành công từ ví!**
-
-Sản phẩm: {product_name}
-Tài khoản: `{account}`
-Số dư còn lại: {new_balance:,}đ
-                """
-            else:
-                msg = f"""
-🎉 **Purchase successful!**
-
-Product: {product_name}
-Account: `{account}`
-Remaining balance: {new_balance} USDT
-                """
-            
-            markup = telebot.types.InlineKeyboardMarkup()
-            markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'back_to_menu'), callback_data="back_to_menu"))
-            
-            bot.send_message(call.message.chat.id, msg, parse_mode='Markdown', reply_markup=markup)
-    else:
-        order_code = generate_order_code()
-        order = {
-            "order_code": order_code, 
-            "user_id": user_id, 
-            "category": code, 
-            "amount": info["price"], 
-            "amount_usdt": info["price_usdt"],
-            "type": "purchase", 
-            "currency_used": currency,
-            "status": "pending", 
-            "created_at": datetime.now()
-        }
-        orders.insert_one(order)
-        notify_admin(order)
-
-        payment_data = CreatePaymentLinkRequest(
-            order_code=order_code,
-            amount=info["price"],
-            description=f"Don #{order_code}",
-            return_url="https://t.me/" + bot.get_me().username,
-            cancel_url="https://t.me/" + bot.get_me().username
-        )
-        payment_link = payos.payment_requests.create(payment_data)
+    # ========== CÁC SẢN PHẨM KHÁC - TRỪ TIỀN VÀ GIAO TÀI KHOẢN NGAY ==========
+    
+    # Trừ tiền
+    update_balance(user_id, -price, currency)
+    
+    # Lấy tài khoản từ stock
+    stock_doc = stocks.find_one({"category": code})
+    
+    if not stock_doc or not stock_doc.get("accounts"):
+        # Hoàn tiền nếu hết hàng
+        update_balance(user_id, price, currency)
         
-        product_name = info["name"] if lang == "vi" else info["name_en"]
         if lang == "vi":
-            msg = f"""
-✅ Đơn hàng #{order_code} đã tạo!
-
-💰 Số tiền: {info['price']:,}đ
-📦 Sản phẩm: {product_name}
-
-🔗 [Thanh toán ngay]({payment_link.checkout_url})
-            """
+            msg = "❌ Rất tiếc, sản phẩm vừa hết hàng! Tiền đã được hoàn vào ví."
         else:
-            msg = f"""
-✅ Order #{order_code} created!
-
-💰 Amount: {info['price']:,} VND
-📦 Product: {product_name}
-
-🔗 [Pay now]({payment_link.checkout_url})
-            """
+            msg = "❌ Sorry, product just went out of stock! Money has been refunded to your wallet."
         
         markup = telebot.types.InlineKeyboardMarkup()
         markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'back_to_menu'), callback_data="back_to_menu"))
         
-        bot.send_message(call.message.chat.id, msg, parse_mode='Markdown', reply_markup=markup)
+        bot.send_message(call.message.chat.id, msg, reply_markup=markup)
+        return
+    
+    account = stock_doc["accounts"].pop(0)
+    stocks.update_one({"category": code}, {"$set": {"accounts": stock_doc["accounts"]}})
+    
+    product_name = info["name"] if lang == "vi" else info["name_en"]
+    new_balance = balance - price
+    
+    # Lưu đơn hàng
+    order_code = generate_order_code()
+    order = {
+        "order_code": order_code,
+        "user_id": user_id,
+        "category": code,
+        "amount": info["price"],
+        "amount_usdt": info["price_usdt"],
+        "type": "purchase",
+        "currency_used": currency,
+        "status": "delivered",
+        "account": account,
+        "created_at": datetime.now(),
+        "delivered_at": datetime.now()
+    }
+    orders.insert_one(order)
+    
+    # Gửi tài khoản cho user
+    if lang == "vi":
+        msg = f"""
+🎉 **MUA THÀNH CÔNG!**
+
+📦 Mã đơn: **#{order_code}**
+🛒 Sản phẩm: **{product_name}**
+💰 Giá: **{price_display}**
+
+🔐 **Tài khoản của bạn:**
+`{account}`
+
+💵 Số dư còn lại: **{new_balance:,}đ**
+
+Cảm ơn bạn đã mua hàng! 🎊
+        """
+    else:
+        msg = f"""
+🎉 **PURCHASE SUCCESSFUL!**
+
+📦 Order ID: **#{order_code}**
+🛒 Product: **{product_name}**
+💰 Price: **{price_display}**
+
+🔐 **Your account:**
+`{account}`
+
+💵 Remaining balance: **{new_balance} USDT**
+
+Thank you for your purchase! 🎊
+        """
+    
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'back_to_menu'), callback_data="back_to_menu"))
+    markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'wallet'), callback_data="my_wallet"))
+    
+    bot.send_message(call.message.chat.id, msg, parse_mode='Markdown', reply_markup=markup)
 
 # ================== ADMIN COMMANDS ==================
 @bot.message_handler(commands=['admin'])
