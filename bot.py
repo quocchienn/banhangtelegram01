@@ -34,6 +34,7 @@ categories = db['categories']
 # Collection để lưu trạng thái chờ upload
 pending_uploads = db['pending_uploads']
 
+# Cache danh mục sản phẩm
 CATEGORIES = {
     "hotspot": {"name": "Hotspot Shield 7D", "name_en": "Hotspot Shield 7D", "price": 2000, "price_usdt": 0.08, "type": "normal"},
     "gemini": {"name": "Gemini Pro 1 Acc 26-29D", "name_en": "Gemini Pro 1 Acc 26-29D", "price": 40000, "price_usdt": 1.6, "type": "normal"},
@@ -43,13 +44,42 @@ CATEGORIES = {
     "youtube1slot": {"name": "YouTube 1 Slot", "name_en": "YouTube 1 Slot", "price": 2000, "price_usdt": 0.08, "type": "youtube_1slot"},
 }
 
-# Khởi tạo categories
-for code, info in CATEGORIES.items():
-    categories.update_one({"code": code}, {"$setOnInsert": {
-        "code": code, "name": info["name"], "name_en": info["name_en"], 
-        "price": info["price"], "price_usdt": info["price_usdt"], 
-        "type": info.get("type"), "enabled": True
-    }}, upsert=True)
+def load_categories_from_db():
+    """Load danh mục từ database để cache"""
+    global CATEGORIES
+    for code, info in CATEGORIES.items():
+        cat_doc = categories.find_one({"code": code})
+        if cat_doc:
+            CATEGORIES[code]["price"] = cat_doc.get("price", info["price"])
+            CATEGORIES[code]["price_usdt"] = cat_doc.get("price_usdt", info["price_usdt"])
+            CATEGORIES[code]["name"] = cat_doc.get("name", info["name"])
+            CATEGORIES[code]["name_en"] = cat_doc.get("name_en", info["name_en"])
+            CATEGORIES[code]["enabled"] = cat_doc.get("enabled", True)
+        else:
+            categories.insert_one({
+                "code": code, 
+                "name": info["name"], 
+                "name_en": info["name_en"], 
+                "price": info["price"], 
+                "price_usdt": info["price_usdt"], 
+                "type": info.get("type"), 
+                "enabled": True
+            })
+
+# Load categories từ DB khi khởi động
+load_categories_from_db()
+
+def reload_categories():
+    """Tải lại danh mục từ database"""
+    global CATEGORIES
+    for code in CATEGORIES.keys():
+        cat_doc = categories.find_one({"code": code})
+        if cat_doc:
+            CATEGORIES[code]["price"] = cat_doc.get("price", CATEGORIES[code]["price"])
+            CATEGORIES[code]["price_usdt"] = cat_doc.get("price_usdt", CATEGORIES[code]["price_usdt"])
+            CATEGORIES[code]["name"] = cat_doc.get("name", CATEGORIES[code]["name"])
+            CATEGORIES[code]["name_en"] = cat_doc.get("name_en", CATEGORIES[code]["name_en"])
+            CATEGORIES[code]["enabled"] = cat_doc.get("enabled", True)
 
 # ================== LANGUAGE SYSTEM ==================
 LANGUAGES = {
@@ -70,6 +100,7 @@ LANGUAGES = {
         "deposit_usdt_invalid": "❌ Vui lòng nhập số hợp lệ!",
         "change_lang": "🌐 Đổi ngôn ngữ / Change Language",
         "back_to_menu": "🔙 Quay lại menu chính",
+        "refresh_menu": "🔄 Làm mới menu",
         "email_prompt": "📧 Vui lòng gửi **email (@gmail.com)** của bạn ngay bây giờ:",
         "email_sent": "✅ Email đã được gửi cho admin! Chúng tôi sẽ xử lý sớm.",
         "email_invalid": "❌ Chỉ chấp nhận email @gmail.com! Vui lòng nhập lại:",
@@ -91,6 +122,7 @@ LANGUAGES = {
         "deposit_usdt_invalid": "❌ Please enter a valid number!",
         "change_lang": "🌐 Change Language / Đổi ngôn ngữ",
         "back_to_menu": "🔙 Back to main menu",
+        "refresh_menu": "🔄 Refresh Menu",
         "email_prompt": "📧 Please send your **email (@gmail.com)** now:",
         "email_sent": "✅ Email has been sent to admin! We will process soon.",
         "email_invalid": "❌ Only @gmail.com emails are accepted! Please try again:",
@@ -117,7 +149,8 @@ def get_user(user_id):
             "balance_usdt": 0,
             "language": None,
             "joined_at": datetime.now(),
-            "waiting_email_for": None
+            "waiting_email_for": None,
+            "last_active": datetime.now()
         }
         users.insert_one(user)
     return user
@@ -184,7 +217,8 @@ def start(message):
         {"$set": {
             "username": message.from_user.username,
             "first_name": message.from_user.first_name,
-            "waiting_email_for": None
+            "waiting_email_for": None,
+            "last_active": datetime.now()
         }}
     )
     
@@ -209,11 +243,19 @@ def start(message):
         reply_markup=markup
     )
 
-def show_main_menu(chat_id, user_id, first_name):
+def show_main_menu(chat_id, user_id, first_name, edit_message_id=None):
+    """Hiển thị menu chính với nút Refresh"""
     lang = get_lang(user_id)
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
     
+    # Reload categories để đảm bảo giá mới nhất
+    reload_categories()
+    
     for code, info in CATEGORIES.items():
+        # Kiểm tra sản phẩm có được kích hoạt không
+        if not info.get("enabled", True):
+            continue
+            
         stock_count = get_stock_count(code)
         name = info["name"] if lang == "vi" else info["name_en"]
         
@@ -238,10 +280,26 @@ def show_main_menu(chat_id, user_id, first_name):
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'deposit'), callback_data="deposit"))
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'deposit_usdt'), callback_data="deposit_usdt"))
     markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'change_lang'), callback_data="change_language"))
+    markup.add(telebot.types.InlineKeyboardButton(t(user_id, 'refresh_menu'), callback_data="refresh_menu"))
+    
+    welcome_text = t(user_id, 'welcome', name=first_name)
+    
+    if edit_message_id:
+        try:
+            bot.edit_message_text(
+                welcome_text,
+                chat_id=chat_id,
+                message_id=edit_message_id,
+                parse_mode='Markdown',
+                reply_markup=markup
+            )
+            return
+        except:
+            pass
     
     bot.send_message(
         chat_id,
-        t(user_id, 'welcome', name=first_name),
+        welcome_text,
         parse_mode='Markdown',
         reply_markup=markup
     )
@@ -518,7 +576,7 @@ def handle_buy(call):
         balance = user.get("balance_usdt", 0)
         price_display = f"{price} USDT"
 
-    # ========== KIỂM TRA SỐ DƯ - TẤT CẢ SẢN PHẨM ĐỀU YÊU CẦU ĐỦ TIỀN TRONG VÍ ==========
+    # ========== KIỂM TRA SỐ DƯ ==========
     if balance < price:
         product_name = info["name"] if lang == "vi" else info["name_en"]
         
@@ -543,7 +601,6 @@ Vui lòng nạp thêm tiền vào ví để tiếp tục mua hàng.
 Please deposit more funds to continue.
             """
         
-        # Tạo markup với nút nạp tiền
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(
             t(user_id, 'deposit'), callback_data="deposit"
@@ -732,6 +789,15 @@ def admin_help(message):
 /setcapcut <số> - Set số lượng CapCut
 /stock - Xem tồn kho hiện tại
 
+💰 **Quản lý giá sản phẩm:**
+/setprice <mã_sp> <giá_vnd> [giá_usdt] - Sửa giá sản phẩm
+/setenable <mã_sp> <on|off> - Bật/tắt sản phẩm
+/prices - Xem tất cả giá sản phẩm
+
+📢 **Thông báo:**
+/broadcast <nội dung> - Gửi thông báo đến TẤT CẢ người dùng
+/broadcastlang <vi|en> <nội dung> - Gửi thông báo theo ngôn ngữ
+
 📤 **Upload tài khoản:**
 /upload_canva - Upload file txt cho Canva
 /upload_youtube - Upload file txt cho YouTube
@@ -741,8 +807,275 @@ def admin_help(message):
 
 ⚙️ **Cài đặt:**
 /setusdtrate <tỷ_giá> - Cập nhật tỷ giá USDT
+/reload - Tải lại danh mục sản phẩm từ DB
     """
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['reload'])
+def admin_reload(message):
+    """Tải lại danh mục sản phẩm từ database"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    reload_categories()
+    bot.reply_to(message, "✅ Đã tải lại danh mục sản phẩm từ database!")
+
+@bot.message_handler(commands=['prices'])
+def admin_view_prices(message):
+    """Xem tất cả giá sản phẩm"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    reload_categories()
+    
+    text = "💰 **BẢNG GIÁ SẢN PHẨM**\n\n"
+    
+    for code, info in CATEGORIES.items():
+        enabled = "✅" if info.get("enabled", True) else "❌"
+        text += f"{enabled} **{code}**\n"
+        text += f"   🇻🇳 {info['name']}: **{info['price']:,}đ**\n"
+        text += f"   🇬🇧 {info['name_en']}: **{info['price_usdt']} USDT**\n"
+        text += f"   📦 Tồn kho: **{get_stock_count(code)}**\n\n"
+    
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['setprice'])
+def admin_set_price(message):
+    """Sửa giá sản phẩm"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            bot.reply_to(message, "Sử dụng: /setprice <mã_sp> <giá_vnd> [giá_usdt]\nVí dụ:\n- /setprice hotspot 5000\n- /setprice gemini 50000 2.0")
+            return
+        
+        code = parts[1].lower()
+        price_vnd = int(parts[2])
+        price_usdt = float(parts[3]) if len(parts) > 3 else round(price_vnd / USDT_RATE, 2)
+        
+        if code not in CATEGORIES:
+            available = ", ".join(CATEGORIES.keys())
+            bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ!\nCác mã có sẵn: {available}")
+            return
+        
+        # Cập nhật trong database
+        categories.update_one(
+            {"code": code},
+            {"$set": {"price": price_vnd, "price_usdt": price_usdt}},
+            upsert=True
+        )
+        
+        # Cập nhật cache
+        reload_categories()
+        
+        info = CATEGORIES[code]
+        bot.reply_to(
+            message,
+            f"✅ Đã cập nhật giá sản phẩm **{info['name']}**\n"
+            f"💰 VND: **{price_vnd:,}đ**\n"
+            f"💵 USDT: **{price_usdt} USDT**"
+        )
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Giá tiền phải là số!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['setenable'])
+def admin_set_enable(message):
+    """Bật/tắt sản phẩm"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            bot.reply_to(message, "Sử dụng: /setenable <mã_sp> <on|off>\nVí dụ: /setenable hotspot off")
+            return
+        
+        code = parts[1].lower()
+        enable_str = parts[2].lower()
+        
+        if code not in CATEGORIES:
+            available = ", ".join(CATEGORIES.keys())
+            bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ!\nCác mã có sẵn: {available}")
+            return
+        
+        enabled = enable_str in ["on", "true", "1", "yes", "bật"]
+        
+        # Cập nhật trong database
+        categories.update_one(
+            {"code": code},
+            {"$set": {"enabled": enabled}},
+            upsert=True
+        )
+        
+        # Cập nhật cache
+        reload_categories()
+        
+        info = CATEGORIES[code]
+        status = "✅ BẬT" if enabled else "❌ TẮT"
+        bot.reply_to(message, f"{status} sản phẩm **{info['name']}**")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['broadcast'])
+def admin_broadcast(message):
+    """Gửi thông báo đến tất cả người dùng"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        # Lấy nội dung sau lệnh
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2:
+            bot.reply_to(message, "Sử dụng: /broadcast <nội dung thông báo>")
+            return
+        
+        content = parts[1]
+        
+        # Lấy tất cả user
+        all_users = list(users.find({}))
+        total_users = len(all_users)
+        
+        if total_users == 0:
+            bot.reply_to(message, "❌ Chưa có người dùng nào!")
+            return
+        
+        # Tạo markup xác nhận
+        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            telebot.types.InlineKeyboardButton("✅ GỬI", callback_data=f"confirm_broadcast"),
+            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_broadcast")
+        )
+        
+        # Lưu nội dung broadcast tạm thời
+        pending_uploads.update_one(
+            {"user_id": message.from_user.id},
+            {"$set": {
+                "action": "broadcast",
+                "content": content,
+                "timestamp": datetime.now()
+            }},
+            upsert=True
+        )
+        
+        preview = content[:200] + "..." if len(content) > 200 else content
+        bot.reply_to(
+            message,
+            f"📢 **XÁC NHẬN GỬI THÔNG BÁO**\n\n"
+            f"👥 Số người nhận: **{total_users}**\n"
+            f"📝 Nội dung:\n{preview}\n\n"
+            f"Bạn có chắc chắn muốn gửi?",
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['broadcastlang'])
+def admin_broadcast_lang(message):
+    """Gửi thông báo đến người dùng theo ngôn ngữ"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            bot.reply_to(message, "Sử dụng: /broadcastlang <vi|en> <nội dung>")
+            return
+        
+        lang_filter = parts[1].lower()
+        content = parts[2]
+        
+        if lang_filter not in ["vi", "en"]:
+            bot.reply_to(message, "❌ Ngôn ngữ phải là 'vi' hoặc 'en'!")
+            return
+        
+        # Lấy user theo ngôn ngữ
+        target_users = list(users.find({"language": lang_filter}))
+        total_users = len(target_users)
+        
+        if total_users == 0:
+            bot.reply_to(message, f"❌ Không có người dùng nào sử dụng ngôn ngữ '{lang_filter}'!")
+            return
+        
+        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            telebot.types.InlineKeyboardButton("✅ GỬI", callback_data=f"confirm_broadcastlang_{lang_filter}"),
+            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_broadcast")
+        )
+        
+        pending_uploads.update_one(
+            {"user_id": message.from_user.id},
+            {"$set": {
+                "action": "broadcast_lang",
+                "lang": lang_filter,
+                "content": content,
+                "timestamp": datetime.now()
+            }},
+            upsert=True
+        )
+        
+        preview = content[:200] + "..." if len(content) > 200 else content
+        lang_name = "Tiếng Việt" if lang_filter == "vi" else "English"
+        bot.reply_to(
+            message,
+            f"📢 **XÁC NHẬN GỬI THÔNG BÁO**\n\n"
+            f"🌐 Ngôn ngữ: **{lang_name}**\n"
+            f"👥 Số người nhận: **{total_users}**\n"
+            f"📝 Nội dung:\n{preview}\n\n"
+            f"Bạn có chắc chắn muốn gửi?",
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+def execute_broadcast(chat_id, content, lang_filter=None):
+    """Thực hiện gửi thông báo"""
+    success = 0
+    failed = 0
+    
+    # Lọc user theo ngôn ngữ nếu có
+    if lang_filter:
+        target_users = users.find({"language": lang_filter})
+    else:
+        target_users = users.find({})
+    
+    for user in target_users:
+        try:
+            user_id = user.get('user_id')
+            if user_id:
+                bot.send_message(
+                    user_id,
+                    f"📢 **THÔNG BÁO TỪ ADMIN**\n\n{content}",
+                    parse_mode='Markdown'
+                )
+                success += 1
+                time.sleep(0.05)  # Tránh rate limit
+        except Exception as e:
+            failed += 1
+            print(f"Không thể gửi cho user {user.get('user_id')}: {e}")
+    
+    bot.send_message(
+        chat_id,
+        f"✅ **KẾT QUẢ GỬI THÔNG BÁO**\n\n"
+        f"✅ Thành công: **{success}**\n"
+        f"❌ Thất bại: **{failed}**",
+        parse_mode='Markdown'
+    )
 
 @bot.message_handler(commands=['danhsach'])
 def admin_danhsach(message):
@@ -942,7 +1275,8 @@ def admin_view_stock(message):
     for code, info in CATEGORIES.items():
         stock_count = get_stock_count(code)
         name = info["name"]
-        text += f"📌 {name}: **{stock_count}** tài khoản\n"
+        enabled = "✅" if info.get("enabled", True) else "❌"
+        text += f"{enabled} 📌 {name}: **{stock_count}** tài khoản\n"
     
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
@@ -1099,7 +1433,7 @@ def admin_upload_command(message):
     
     pending_uploads.update_one(
         {"user_id": message.from_user.id},
-        {"$set": {"category": category, "timestamp": datetime.now()}},
+        {"$set": {"category": category, "timestamp": datetime.now(), "action": "upload"}},
         upsert=True
     )
     
@@ -1299,7 +1633,10 @@ def handle_document(message):
     
     pending = pending_uploads.find_one({"user_id": message.from_user.id})
     if not pending:
-        bot.reply_to(message, "❌ Bạn chưa dùng lệnh upload nào! Hãy dùng /upload_canva, /upload_youtube, v.v... trước.")
+        return
+    
+    action = pending.get("action", "upload")
+    if action != "upload":
         return
     
     category = pending.get("category")
@@ -1357,6 +1694,10 @@ def callback_handler(call):
             deposit_usdt_prompt(call)
         elif call.data == "back_to_menu":
             show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name)
+        elif call.data == "refresh_menu":
+            # Làm mới menu - edit message hiện tại
+            reload_categories()
+            show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name, call.message.message_id)
         elif call.data.startswith("deposit_"):
             handle_deposit_amount(call)
         elif call.data.startswith("buy_"):
@@ -1372,8 +1713,62 @@ def callback_handler(call):
         elif call.data == "cancel_xoasoduall":
             bot.edit_message_text("❌ Đã hủy thao tác xóa số dư.", call.message.chat.id, call.message.message_id)
             bot.answer_callback_query(call.id, "Đã hủy")
+        elif call.data == "confirm_broadcast":
+            handle_broadcast_confirm(call)
+        elif call.data.startswith("confirm_broadcastlang_"):
+            handle_broadcastlang_confirm(call)
+        elif call.data == "cancel_broadcast":
+            bot.edit_message_text("❌ Đã hủy gửi thông báo.", call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id, "Đã hủy")
+            pending_uploads.delete_one({"user_id": call.from_user.id})
     except Exception as e:
         print("Lỗi callback:", e)
+
+def handle_broadcast_confirm(call):
+    """Xác nhận gửi broadcast"""
+    if call.from_user.id != ADMIN_ID:
+        return
+    
+    pending = pending_uploads.find_one({"user_id": call.from_user.id})
+    if not pending:
+        bot.edit_message_text("❌ Không tìm thấy nội dung thông báo!", call.message.chat.id, call.message.message_id)
+        return
+    
+    content = pending.get("content", "")
+    if not content:
+        bot.edit_message_text("❌ Nội dung trống!", call.message.chat.id, call.message.message_id)
+        return
+    
+    bot.edit_message_text("📤 **Đang gửi thông báo...**", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
+    # Thực hiện gửi
+    execute_broadcast(call.message.chat.id, content)
+    
+    pending_uploads.delete_one({"user_id": call.from_user.id})
+
+def handle_broadcastlang_confirm(call):
+    """Xác nhận gửi broadcast theo ngôn ngữ"""
+    if call.from_user.id != ADMIN_ID:
+        return
+    
+    lang_filter = call.data.replace("confirm_broadcastlang_", "")
+    
+    pending = pending_uploads.find_one({"user_id": call.from_user.id})
+    if not pending:
+        bot.edit_message_text("❌ Không tìm thấy nội dung thông báo!", call.message.chat.id, call.message.message_id)
+        return
+    
+    content = pending.get("content", "")
+    if not content:
+        bot.edit_message_text("❌ Nội dung trống!", call.message.chat.id, call.message.message_id)
+        return
+    
+    bot.edit_message_text("📤 **Đang gửi thông báo...**", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
+    # Thực hiện gửi
+    execute_broadcast(call.message.chat.id, content, lang_filter)
+    
+    pending_uploads.delete_one({"user_id": call.from_user.id})
 
 def handle_reset_all(call):
     if call.from_user.id != ADMIN_ID:
@@ -1414,17 +1809,12 @@ def handle_xoasoduall_callback(call):
 # ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG (CUỐI CÙNG) ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
+    # Bỏ qua tất cả lệnh bắt đầu bằng / (để các @bot.message_handler(commands=...) chạy trước)
+    if message.text and message.text.strip().startswith('/'):
+        return
+    
     user_id = message.from_user.id
     user = get_user(user_id)
-    
-    # Bỏ qua nếu là lệnh (bắt đầu bằng /)
-    if message.text and message.text.startswith('/'):
-        lang = user.get("language", "vi")
-        if lang == "vi":
-            bot.reply_to(message, "❌ Lệnh không tồn tại. Dùng /start để bắt đầu.")
-        else:
-            bot.reply_to(message, "❌ Command not found. Use /start to begin.")
-        return
     
     waiting_for = user.get("waiting_email_for")
     
@@ -1450,7 +1840,7 @@ User ID: `{user_id}`
 Tên/Name: {message.from_user.first_name or 'N/A'}
 Email: `{email}`
 Ngôn ngữ/Language: {lang.upper()}
-            """)
+            """, parse_mode='Markdown')
             
             orders.update_one(
                 {"_id": pending["_id"]}, 
@@ -1472,7 +1862,7 @@ Ngôn ngữ/Language: {lang.upper()}
         
         return
     
-    # Tin nhắn thông thường không phải lệnh
+    # Tin nhắn thông thường không phải lệnh và không chờ email
     lang = user.get("language", "vi")
     if lang == "vi":
         bot.reply_to(message, "❌ Không hiểu lệnh. Dùng /start để bắt đầu.")
