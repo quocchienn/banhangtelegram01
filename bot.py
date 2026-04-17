@@ -1807,13 +1807,14 @@ def handle_xoasoduall_callback(call):
     bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
     bot.answer_callback_query(call.id, "✅ Đã xóa thành công!")
 
-# ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG (CUỐI CÙNG) ==================
+# ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG (PHẢI ĐẶT Ở CUỐI CÙNG) ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
-    # Bỏ qua tất cả lệnh bắt đầu bằng / (để các @bot.message_handler(commands=...) chạy trước)
+    # Quan trọng nhất: BỎ QUA tất cả lệnh bắt đầu bằng / 
+    # để các @bot.message_handler(commands=...) được ưu tiên chạy trước
     if message.text and message.text.strip().startswith('/'):
         return
-    
+
     user_id = message.from_user.id
     user = get_user(user_id)
     
@@ -1863,13 +1864,10 @@ Ngôn ngữ/Language: {lang.upper()}
         
         return
     
-    # Tin nhắn thông thường không phải lệnh và không chờ email
+    # Tin nhắn bình thường (không phải lệnh)
     lang = user.get("language", "vi")
-    if lang == "vi":
-        bot.reply_to(message, "❌ Không hiểu lệnh. Dùng /start để bắt đầu.")
-    else:
-        bot.reply_to(message, "❌ Command not understood. Use /start to begin.")
-
+    reply = "❌ Không hiểu lệnh. Dùng /start để bắt đầu." if lang == "vi" else "❌ Command not understood. Use /start to begin."
+    bot.reply_to(message, reply)
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
 
