@@ -768,7 +768,6 @@ def admin_help(message):
 🔧 **ADMIN COMMANDS**
 
 📊 **Quản lý user:**
-/admin
 /danhsach - Xem danh sách tất cả người dùng
 /xoasodu <user_id> [vnd|usdt|all] - Xóa số dư 1 user
 /xoasoduall [vnd|usdt|all] - Xóa số dư TẤT CẢ user (có xác nhận)
@@ -811,273 +810,6 @@ def admin_help(message):
 /reload - Tải lại danh mục sản phẩm từ DB
     """
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['reload'])
-def admin_reload(message):
-    """Tải lại danh mục sản phẩm từ database"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
-        return
-    
-    reload_categories()
-    bot.reply_to(message, "✅ Đã tải lại danh mục sản phẩm từ database!")
-
-@bot.message_handler(commands=['prices'])
-def admin_view_prices(message):
-    """Xem tất cả giá sản phẩm"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
-        return
-    
-    reload_categories()
-    
-    text = "💰 **BẢNG GIÁ SẢN PHẨM**\n\n"
-    
-    for code, info in CATEGORIES.items():
-        enabled = "✅" if info.get("enabled", True) else "❌"
-        text += f"{enabled} **{code}**\n"
-        text += f"   🇻🇳 {info['name']}: **{info['price']:,}đ**\n"
-        text += f"   🇬🇧 {info['name_en']}: **{info['price_usdt']} USDT**\n"
-        text += f"   📦 Tồn kho: **{get_stock_count(code)}**\n\n"
-    
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['setprice'])
-def admin_set_price(message):
-    """Sửa giá sản phẩm"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 3:
-            bot.reply_to(message, "Sử dụng: /setprice <mã_sp> <giá_vnd> [giá_usdt]\nVí dụ:\n- /setprice hotspot 5000\n- /setprice gemini 50000 2.0")
-            return
-        
-        code = parts[1].lower()
-        price_vnd = int(parts[2])
-        price_usdt = float(parts[3]) if len(parts) > 3 else round(price_vnd / USDT_RATE, 2)
-        
-        if code not in CATEGORIES:
-            available = ", ".join(CATEGORIES.keys())
-            bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ!\nCác mã có sẵn: {available}")
-            return
-        
-        # Cập nhật trong database
-        categories.update_one(
-            {"code": code},
-            {"$set": {"price": price_vnd, "price_usdt": price_usdt}},
-            upsert=True
-        )
-        
-        # Cập nhật cache
-        reload_categories()
-        
-        info = CATEGORIES[code]
-        bot.reply_to(
-            message,
-            f"✅ Đã cập nhật giá sản phẩm **{info['name']}**\n"
-            f"💰 VND: **{price_vnd:,}đ**\n"
-            f"💵 USDT: **{price_usdt} USDT**"
-        )
-        
-    except ValueError:
-        bot.reply_to(message, "❌ Giá tiền phải là số!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
-
-@bot.message_handler(commands=['setenable'])
-def admin_set_enable(message):
-    """Bật/tắt sản phẩm"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 3:
-            bot.reply_to(message, "Sử dụng: /setenable <mã_sp> <on|off>\nVí dụ: /setenable hotspot off")
-            return
-        
-        code = parts[1].lower()
-        enable_str = parts[2].lower()
-        
-        if code not in CATEGORIES:
-            available = ", ".join(CATEGORIES.keys())
-            bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ!\nCác mã có sẵn: {available}")
-            return
-        
-        enabled = enable_str in ["on", "true", "1", "yes", "bật"]
-        
-        # Cập nhật trong database
-        categories.update_one(
-            {"code": code},
-            {"$set": {"enabled": enabled}},
-            upsert=True
-        )
-        
-        # Cập nhật cache
-        reload_categories()
-        
-        info = CATEGORIES[code]
-        status = "✅ BẬT" if enabled else "❌ TẮT"
-        bot.reply_to(message, f"{status} sản phẩm **{info['name']}**")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
-
-@bot.message_handler(commands=['broadcast'])
-def admin_broadcast(message):
-    """Gửi thông báo đến tất cả người dùng"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
-        return
-    
-    try:
-        # Lấy nội dung sau lệnh
-        parts = message.text.split(maxsplit=1)
-        if len(parts) < 2:
-            bot.reply_to(message, "Sử dụng: /broadcast <nội dung thông báo>")
-            return
-        
-        content = parts[1]
-        
-        # Lấy tất cả user
-        all_users = list(users.find({}))
-        total_users = len(all_users)
-        
-        if total_users == 0:
-            bot.reply_to(message, "❌ Chưa có người dùng nào!")
-            return
-        
-        # Tạo markup xác nhận
-        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            telebot.types.InlineKeyboardButton("✅ GỬI", callback_data=f"confirm_broadcast"),
-            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_broadcast")
-        )
-        
-        # Lưu nội dung broadcast tạm thời
-        pending_uploads.update_one(
-            {"user_id": message.from_user.id},
-            {"$set": {
-                "action": "broadcast",
-                "content": content,
-                "timestamp": datetime.now()
-            }},
-            upsert=True
-        )
-        
-        preview = content[:200] + "..." if len(content) > 200 else content
-        bot.reply_to(
-            message,
-            f"📢 **XÁC NHẬN GỬI THÔNG BÁO**\n\n"
-            f"👥 Số người nhận: **{total_users}**\n"
-            f"📝 Nội dung:\n{preview}\n\n"
-            f"Bạn có chắc chắn muốn gửi?",
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
-
-@bot.message_handler(commands=['broadcastlang'])
-def admin_broadcast_lang(message):
-    """Gửi thông báo đến người dùng theo ngôn ngữ"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
-        return
-    
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 3:
-            bot.reply_to(message, "Sử dụng: /broadcastlang <vi|en> <nội dung>")
-            return
-        
-        lang_filter = parts[1].lower()
-        content = parts[2]
-        
-        if lang_filter not in ["vi", "en"]:
-            bot.reply_to(message, "❌ Ngôn ngữ phải là 'vi' hoặc 'en'!")
-            return
-        
-        # Lấy user theo ngôn ngữ
-        target_users = list(users.find({"language": lang_filter}))
-        total_users = len(target_users)
-        
-        if total_users == 0:
-            bot.reply_to(message, f"❌ Không có người dùng nào sử dụng ngôn ngữ '{lang_filter}'!")
-            return
-        
-        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            telebot.types.InlineKeyboardButton("✅ GỬI", callback_data=f"confirm_broadcastlang_{lang_filter}"),
-            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_broadcast")
-        )
-        
-        pending_uploads.update_one(
-            {"user_id": message.from_user.id},
-            {"$set": {
-                "action": "broadcast_lang",
-                "lang": lang_filter,
-                "content": content,
-                "timestamp": datetime.now()
-            }},
-            upsert=True
-        )
-        
-        preview = content[:200] + "..." if len(content) > 200 else content
-        lang_name = "Tiếng Việt" if lang_filter == "vi" else "English"
-        bot.reply_to(
-            message,
-            f"📢 **XÁC NHẬN GỬI THÔNG BÁO**\n\n"
-            f"🌐 Ngôn ngữ: **{lang_name}**\n"
-            f"👥 Số người nhận: **{total_users}**\n"
-            f"📝 Nội dung:\n{preview}\n\n"
-            f"Bạn có chắc chắn muốn gửi?",
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
-
-def execute_broadcast(chat_id, content, lang_filter=None):
-    """Thực hiện gửi thông báo"""
-    success = 0
-    failed = 0
-    
-    # Lọc user theo ngôn ngữ nếu có
-    if lang_filter:
-        target_users = users.find({"language": lang_filter})
-    else:
-        target_users = users.find({})
-    
-    for user in target_users:
-        try:
-            user_id = user.get('user_id')
-            if user_id:
-                bot.send_message(
-                    user_id,
-                    f"📢 **THÔNG BÁO TỪ ADMIN**\n\n{content}",
-                    parse_mode='Markdown'
-                )
-                success += 1
-                time.sleep(0.05)  # Tránh rate limit
-        except Exception as e:
-            failed += 1
-            print(f"Không thể gửi cho user {user.get('user_id')}: {e}")
-    
-    bot.send_message(
-        chat_id,
-        f"✅ **KẾT QUẢ GỬI THÔNG BÁO**\n\n"
-        f"✅ Thành công: **{success}**\n"
-        f"❌ Thất bại: **{failed}**",
-        parse_mode='Markdown'
-    )
-
 @bot.message_handler(commands=['danhsach'])
 def admin_danhsach(message):
     """Xem danh sách tất cả người dùng với Tên, ID, Số dư"""
@@ -1807,14 +1539,280 @@ def handle_xoasoduall_callback(call):
     bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
     bot.answer_callback_query(call.id, "✅ Đã xóa thành công!")
 
-# ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG (PHẢI ĐẶT Ở CUỐI CÙNG) ==================
+@bot.message_handler(commands=['reload'])
+def admin_reload(message):
+    """Tải lại danh mục sản phẩm từ database"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    reload_categories()
+    bot.reply_to(message, "✅ Đã tải lại danh mục sản phẩm từ database!")
+
+@bot.message_handler(commands=['prices'])
+def admin_view_prices(message):
+    """Xem tất cả giá sản phẩm"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    reload_categories()
+    
+    text = "💰 **BẢNG GIÁ SẢN PHẨM**\n\n"
+    
+    for code, info in CATEGORIES.items():
+        enabled = "✅" if info.get("enabled", True) else "❌"
+        text += f"{enabled} **{code}**\n"
+        text += f"   🇻🇳 {info['name']}: **{info['price']:,}đ**\n"
+        text += f"   🇬🇧 {info['name_en']}: **{info['price_usdt']} USDT**\n"
+        text += f"   📦 Tồn kho: **{get_stock_count(code)}**\n\n"
+    
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['setprice'])
+def admin_set_price(message):
+    """Sửa giá sản phẩm"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            bot.reply_to(message, "Sử dụng: /setprice <mã_sp> <giá_vnd> [giá_usdt]\nVí dụ:\n- /setprice hotspot 5000\n- /setprice gemini 50000 2.0")
+            return
+        
+        code = parts[1].lower()
+        price_vnd = int(parts[2])
+        price_usdt = float(parts[3]) if len(parts) > 3 else round(price_vnd / USDT_RATE, 2)
+        
+        if code not in CATEGORIES:
+            available = ", ".join(CATEGORIES.keys())
+            bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ!\nCác mã có sẵn: {available}")
+            return
+        
+        # Cập nhật trong database
+        categories.update_one(
+            {"code": code},
+            {"$set": {"price": price_vnd, "price_usdt": price_usdt}},
+            upsert=True
+        )
+        
+        # Cập nhật cache
+        reload_categories()
+        
+        info = CATEGORIES[code]
+        bot.reply_to(
+            message,
+            f"✅ Đã cập nhật giá sản phẩm **{info['name']}**\n"
+            f"💰 VND: **{price_vnd:,}đ**\n"
+            f"💵 USDT: **{price_usdt} USDT**"
+        )
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Giá tiền phải là số!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['setenable'])
+def admin_set_enable(message):
+    """Bật/tắt sản phẩm"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            bot.reply_to(message, "Sử dụng: /setenable <mã_sp> <on|off>\nVí dụ: /setenable hotspot off")
+            return
+        
+        code = parts[1].lower()
+        enable_str = parts[2].lower()
+        
+        if code not in CATEGORIES:
+            available = ", ".join(CATEGORIES.keys())
+            bot.reply_to(message, f"❌ Mã sản phẩm không hợp lệ!\nCác mã có sẵn: {available}")
+            return
+        
+        enabled = enable_str in ["on", "true", "1", "yes", "bật"]
+        
+        # Cập nhật trong database
+        categories.update_one(
+            {"code": code},
+            {"$set": {"enabled": enabled}},
+            upsert=True
+        )
+        
+        # Cập nhật cache
+        reload_categories()
+        
+        info = CATEGORIES[code]
+        status = "✅ BẬT" if enabled else "❌ TẮT"
+        bot.reply_to(message, f"{status} sản phẩm **{info['name']}**")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['broadcast'])
+def admin_broadcast(message):
+    """Gửi thông báo đến tất cả người dùng"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        # Lấy nội dung sau lệnh
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2:
+            bot.reply_to(message, "Sử dụng: /broadcast <nội dung thông báo>")
+            return
+        
+        content = parts[1]
+        
+        # Lấy tất cả user
+        all_users = list(users.find({}))
+        total_users = len(all_users)
+        
+        if total_users == 0:
+            bot.reply_to(message, "❌ Chưa có người dùng nào!")
+            return
+        
+        # Tạo markup xác nhận
+        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            telebot.types.InlineKeyboardButton("✅ GỬI", callback_data=f"confirm_broadcast"),
+            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_broadcast")
+        )
+        
+        # Lưu nội dung broadcast tạm thời
+        pending_uploads.update_one(
+            {"user_id": message.from_user.id},
+            {"$set": {
+                "action": "broadcast",
+                "content": content,
+                "timestamp": datetime.now()
+            }},
+            upsert=True
+        )
+        
+        preview = content[:200] + "..." if len(content) > 200 else content
+        bot.reply_to(
+            message,
+            f"📢 **XÁC NHẬN GỬI THÔNG BÁO**\n\n"
+            f"👥 Số người nhận: **{total_users}**\n"
+            f"📝 Nội dung:\n{preview}\n\n"
+            f"Bạn có chắc chắn muốn gửi?",
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+@bot.message_handler(commands=['broadcastlang'])
+def admin_broadcast_lang(message):
+    """Gửi thông báo đến người dùng theo ngôn ngữ"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Bạn không có quyền sử dụng lệnh này!")
+        return
+    
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            bot.reply_to(message, "Sử dụng: /broadcastlang <vi|en> <nội dung>")
+            return
+        
+        lang_filter = parts[1].lower()
+        content = parts[2]
+        
+        if lang_filter not in ["vi", "en"]:
+            bot.reply_to(message, "❌ Ngôn ngữ phải là 'vi' hoặc 'en'!")
+            return
+        
+        # Lấy user theo ngôn ngữ
+        target_users = list(users.find({"language": lang_filter}))
+        total_users = len(target_users)
+        
+        if total_users == 0:
+            bot.reply_to(message, f"❌ Không có người dùng nào sử dụng ngôn ngữ '{lang_filter}'!")
+            return
+        
+        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            telebot.types.InlineKeyboardButton("✅ GỬI", callback_data=f"confirm_broadcastlang_{lang_filter}"),
+            telebot.types.InlineKeyboardButton("❌ HỦY", callback_data="cancel_broadcast")
+        )
+        
+        pending_uploads.update_one(
+            {"user_id": message.from_user.id},
+            {"$set": {
+                "action": "broadcast_lang",
+                "lang": lang_filter,
+                "content": content,
+                "timestamp": datetime.now()
+            }},
+            upsert=True
+        )
+        
+        preview = content[:200] + "..." if len(content) > 200 else content
+        lang_name = "Tiếng Việt" if lang_filter == "vi" else "English"
+        bot.reply_to(
+            message,
+            f"📢 **XÁC NHẬN GỬI THÔNG BÁO**\n\n"
+            f"🌐 Ngôn ngữ: **{lang_name}**\n"
+            f"👥 Số người nhận: **{total_users}**\n"
+            f"📝 Nội dung:\n{preview}\n\n"
+            f"Bạn có chắc chắn muốn gửi?",
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi: {str(e)}")
+
+def execute_broadcast(chat_id, content, lang_filter=None):
+    """Thực hiện gửi thông báo"""
+    success = 0
+    failed = 0
+    
+    # Lọc user theo ngôn ngữ nếu có
+    if lang_filter:
+        target_users = users.find({"language": lang_filter})
+    else:
+        target_users = users.find({})
+    
+    for user in target_users:
+        try:
+            user_id = user.get('user_id')
+            if user_id:
+                bot.send_message(
+                    user_id,
+                    f"📢 **THÔNG BÁO TỪ ADMIN**\n\n{content}",
+                    parse_mode='Markdown'
+                )
+                success += 1
+                time.sleep(0.05)  # Tránh rate limit
+        except Exception as e:
+            failed += 1
+            print(f"Không thể gửi cho user {user.get('user_id')}: {e}")
+    
+    bot.send_message(
+        chat_id,
+        f"✅ **KẾT QUẢ GỬI THÔNG BÁO**\n\n"
+        f"✅ Thành công: **{success}**\n"
+        f"❌ Thất bại: **{failed}**",
+        parse_mode='Markdown'
+    )
+
+
+# ================== XỬ LÝ TIN NHẮN THÔNG THƯỜNG (CUỐI CÙNG) ==================
 @bot.message_handler(func=lambda m: True)
 def handle_user_message(message):
-    # Quan trọng nhất: BỎ QUA tất cả lệnh bắt đầu bằng / 
-    # để các @bot.message_handler(commands=...) được ưu tiên chạy trước
+    # Bỏ qua tất cả lệnh bắt đầu bằng / (để các @bot.message_handler(commands=...) chạy trước)
     if message.text and message.text.strip().startswith('/'):
         return
-
+    
     user_id = message.from_user.id
     user = get_user(user_id)
     
@@ -1864,10 +1862,13 @@ Ngôn ngữ/Language: {lang.upper()}
         
         return
     
-    # Tin nhắn bình thường (không phải lệnh)
+    # Tin nhắn thông thường không phải lệnh và không chờ email
     lang = user.get("language", "vi")
-    reply = "❌ Không hiểu lệnh. Dùng /start để bắt đầu." if lang == "vi" else "❌ Command not understood. Use /start to begin."
-    bot.reply_to(message, reply)
+    if lang == "vi":
+        bot.reply_to(message, "❌ Không hiểu lệnh. Dùng /start để bắt đầu.")
+    else:
+        bot.reply_to(message, "❌ Command not understood. Use /start to begin.")
+
 # ================== FLASK + POLLING ==================
 flask_app = Flask(__name__)
 
