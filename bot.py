@@ -768,6 +768,7 @@ def admin_help(message):
 🔧 **ADMIN COMMANDS**
 
 📊 **Quản lý user:**
+/admin
 /danhsach - Xem danh sách tất cả người dùng
 /xoasodu <user_id> [vnd|usdt|all] - Xóa số dư 1 user
 /xoasoduall [vnd|usdt|all] - Xóa số dư TẤT CẢ user (có xác nhận)
