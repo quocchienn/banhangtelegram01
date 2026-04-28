@@ -1104,6 +1104,16 @@ def admin_danhsach(message):
         total_balance_vnd = sum(u.get('balance', 0) for u in all_users)
         total_balance_usdt = sum(u.get('balance_usdt', 0) for u in all_users)
         
+        # Hàm helper để escape ký tự đặc biệt trong Markdown
+        def escape_md(text):
+            """Escape các ký tự đặc biệt cho Markdown"""
+            if not text:
+                return ""
+            escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in escape_chars:
+                text = text.replace(char, '\\' + char)
+            return text
+        
         # Tạo header
         text = f"📊 **DANH SÁCH NGƯỜI DÙNG**\n"
         text += f"👥 Tổng số: **{total_users}** người dùng\n"
@@ -1117,16 +1127,17 @@ def admin_danhsach(message):
         
         for idx, u in enumerate(all_users, 1):
             user_id = u.get('user_id', 'N/A')
-            first_name = u.get('first_name', 'Không tên')
+            first_name = escape_md(u.get('first_name', 'Không tên'))
             username = u.get('username', '')
             balance_vnd = u.get('balance', 0)
             balance_usdt = u.get('balance_usdt', 0)
             lang = u.get('language', 'vi')
             joined = u.get('joined_at', datetime.now()).strftime('%d/%m/%Y')
             
-            # Format tên hiển thị
+            # Format tên hiển thị (escape username)
             if username:
-                display_name = f"{first_name} (@{username})"
+                username_escaped = escape_md(username)
+                display_name = f"{first_name} (@{username_escaped})"
             else:
                 display_name = first_name
             
@@ -1137,7 +1148,13 @@ def admin_danhsach(message):
             
             # Kiểm tra độ dài, nếu quá 3500 ký tự thì gửi phần hiện tại
             if len(current_text + user_info) > 3500:
-                bot.send_message(message.chat.id, current_text, parse_mode='Markdown')
+                try:
+                    bot.send_message(message.chat.id, current_text, parse_mode='Markdown')
+                except Exception as e:
+                    # Nếu vẫn lỗi parse thì gửi không có parse_mode
+                    print(f"Lỗi parse Markdown: {e}")
+                    bot.send_message(message.chat.id, current_text)
+                
                 current_text = f"📊 **DANH SÁCH NGƯỜI DÙNG (Phần {part+1})**\n\n"
                 part += 1
             
@@ -1145,7 +1162,11 @@ def admin_danhsach(message):
         
         # Gửi phần còn lại
         if current_text:
-            bot.send_message(message.chat.id, current_text, parse_mode='Markdown')
+            try:
+                bot.send_message(message.chat.id, current_text, parse_mode='Markdown')
+            except Exception as e:
+                print(f"Lỗi parse Markdown: {e}")
+                bot.send_message(message.chat.id, current_text)
             
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi: {str(e)}")
